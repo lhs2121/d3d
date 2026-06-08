@@ -164,7 +164,6 @@ void Renderer::InitializePipeline()
 	m_pipeline.pDepthStencilState = d3d::CreateDepthStencilState(m_pDevice);
 
 	LoadPipelineShader(L"Assets\\Shaders\\BasicSprite2DShader.hlsl");
-	LoadTexture(L"Test.png");
 
 	D3D11_INPUT_ELEMENT_DESC iaDesc[] =
 	{
@@ -182,8 +181,7 @@ void Renderer::InitializePipeline()
 
 void Renderer::ReleasePipeline()
 {
-	if (m_pipeline.pTexture)
-		m_pipeline.pTexture->Release();
+	ReleaseTextures();
 	if (m_pipeline.pPixelShader)
 		m_pipeline.pPixelShader->Release();
 	if (m_pipeline.pVertexShader)
@@ -206,9 +204,34 @@ void Renderer::ReleasePipeline()
 		m_pipeline.pQuadVertexBuffer->Release();
 }
 
+void Renderer::ReleaseTextures()
+{
+	for (auto& texture : m_textureMap)
+	{
+		if (texture.second)
+			texture.second->Release();
+	}
+
+	m_textureMap.clear();
+	m_pipeline.pTexture = nullptr;
+}
+
 void Renderer::LoadTexture(const WCHAR* textureFile)
 {
-	WCHAR* wszFullPath = new WCHAR[MAX_PATH];
+	m_pipeline.pTexture = GetTexture(textureFile);
+}
+
+ID3D11ShaderResourceView* Renderer::GetTexture(const WCHAR* textureFile)
+{
+	if (textureFile == nullptr)
+		return nullptr;
+
+	std::wstring key(textureFile);
+	auto iter = m_textureMap.find(key);
+	if (iter != m_textureMap.end())
+		return iter->second;
+
+	WCHAR wszFullPath[MAX_PATH] = {};
 	GetCurrentDirectoryW(MAX_PATH, wszFullPath);
 	PathAppendW(wszFullPath, textureFile);
 
@@ -228,8 +251,7 @@ void Renderer::LoadTexture(const WCHAR* textureFile)
 		OutputDebugStringW(wszFullPath);
 		OutputDebugStringW(L"\n");
 		__debugbreak();
-		delete[] wszFullPath;
-		return;
+		return nullptr;
 	}
 
 	WCHAR* wszExt = PathFindExtensionW(textureFile);
@@ -258,8 +280,7 @@ void Renderer::LoadTexture(const WCHAR* textureFile)
 		OutputDebugStringW(wszFullPath);
 		OutputDebugStringW(L"\n");
 		__debugbreak();
-		delete[] wszFullPath;
-		return;
+		return nullptr;
 	}
 
 	hr = DirectX::CreateShaderResourceView(m_pDevice, scratchImage.GetImages(), scratchImage.GetImageCount(), metaData, &pSRV);
@@ -269,15 +290,11 @@ void Renderer::LoadTexture(const WCHAR* textureFile)
 		OutputDebugStringW(wszFullPath);
 		OutputDebugStringW(L"\n");
 		__debugbreak();
-		delete[] wszFullPath;
-		return;
+		return nullptr;
 	}
 
-	if (m_pipeline.pTexture)
-		m_pipeline.pTexture->Release();
-	m_pipeline.pTexture = pSRV;
-
-	delete[] wszFullPath;
+	m_textureMap.insert({ key, pSRV });
+	return pSRV;
 }
 
 void Renderer::LoadPipelineShader(const WCHAR* shaderFile)
@@ -386,7 +403,47 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 	if (desc.textureFile == nullptr || desc.tiles == nullptr || desc.width <= 0 || desc.height <= 0)
 		return;
 
-	ID3D11ShaderResourceView* texture = m_pipeline.pTexture;
+	ID3D11ShaderResourceView* texture = GetTexture(desc.textureFile);
+	if (m_pipeline.pVertexShader == nullptr || m_pipeline.pPixelShader == nullptr || texture == nullptr)
+		return;
+
+	for (int y = 0; y < desc.height; ++y)
+	{
+		for (int x = 0; x < desc.width; ++x)
+		{
+			const BlockTile& tile = desc.tiles[y * desc.width + x];
+			if (!tile.visible)
+				continue;
+
+			SpriteDesc spriteDesc;
+			spriteDesc.positionX = desc.originX + x * desc.tileSize;
+			spriteDesc.positionY = desc.originY - y * desc.tileSize;
+			spriteDesc.width = desc.tileSize;
+			spriteDesc.height = desc.tileSize;
+			spriteDesc.atlasColumns = desc.atlasColumns;
+			spriteDesc.atlasRows = desc.atlasRows;
+			spriteDesc.tileIndex = tile.tileIndex;
+			spriteDesc.depth = 0.0f;
+
+			DrawSpriteQuad(spriteDesc, texture);
+		}
+	}
+}
+
+void Renderer::DrawSprite(const SpriteDesc& desc)
+{
+	if (desc.textureFile == nullptr)
+		return;
+
+	ID3D11ShaderResourceView* texture = GetTexture(desc.textureFile);
+	if (texture == nullptr)
+		return;
+
+	DrawSpriteQuad(desc, texture);
+}
+
+void Renderer::DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* texture)
+{
 	if (m_pipeline.pVertexShader == nullptr || m_pipeline.pPixelShader == nullptr || texture == nullptr)
 		return;
 
@@ -404,41 +461,40 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 	m_pDeviceContext->OMSetBlendState(m_pipeline.pBlendState, nullptr, 0xFFFFFFFF);
 	m_pDeviceContext->OMSetDepthStencilState(m_pipeline.pDepthStencilState, 0);
 
-	const int atlasColumns = desc.atlasColumns > 0 ? desc.atlasColumns : 1;
-	const int atlasRows = desc.atlasRows > 0 ? desc.atlasRows : 1;
+	int atlasColumns = desc.atlasColumns > 0 ? desc.atlasColumns : 1;
+	int atlasRows = desc.atlasRows > 0 ? desc.atlasRows : 1;
+	int tileCount = atlasColumns * atlasRows;
+	int tileIndex = desc.tileIndex;
+	if (tileIndex < 0)
+		tileIndex = 0;
+	if (tileCount > 0)
+		tileIndex = tileIndex % tileCount;
+
+	const int tileX = tileIndex % atlasColumns;
+	const int tileY = tileIndex / atlasColumns;
 	const float uvWidth = 1.0f / atlasColumns;
 	const float uvHeight = 1.0f / atlasRows;
 
-	for (int y = 0; y < desc.height; ++y)
+	SpriteData spriteData;
+	spriteData.ratio = { uvWidth, uvHeight };
+	spriteData.offset = { tileX * uvWidth, tileY * uvHeight };
+	if (desc.flipX)
 	{
-		for (int x = 0; x < desc.width; ++x)
-		{
-			const BlockTile& tile = desc.tiles[y * desc.width + x];
-			if (!tile.visible)
-				continue;
-
-			const int tileX = tile.tileIndex % atlasColumns;
-			const int tileY = tile.tileIndex / atlasColumns;
-
-			SpriteData spriteData;
-			spriteData.ratio = { uvWidth, uvHeight };
-			spriteData.offset = { tileX * uvWidth, tileY * uvHeight };
-
-			const float posX = desc.originX + x * desc.tileSize;
-			const float posY = desc.originY - y * desc.tileSize;
-			XMMATRIX world = XMMatrixScaling(desc.tileSize, desc.tileSize, 1.0f) * XMMatrixTranslation(posX, posY, 0.0f);
-
-			SpriteTransformData transformData{ world, m_matView, m_matProjection };
-			ID3D11Buffer* transformBuffer = d3d::CreateConstantBuffer(m_pDevice, &transformData, sizeof(SpriteTransformData));
-			ID3D11Buffer* spriteBuffer = d3d::CreateConstantBuffer(m_pDevice, &spriteData, sizeof(SpriteData));
-
-			d3d::BindVertexConstantBuffer(m_pDeviceContext, transformBuffer, &transformData, sizeof(SpriteTransformData), 0);
-			d3d::BindPixelConstantBuffer(m_pDeviceContext, spriteBuffer, &spriteData, sizeof(SpriteData), 0);
-			m_pDeviceContext->DrawIndexed(6, 0, 0);
-
-			transformBuffer->Release();
-			spriteBuffer->Release();
-		}
+		spriteData.ratio.x = -uvWidth;
+		spriteData.offset.x = (tileX + 1) * uvWidth;
 	}
+
+	XMMATRIX world = XMMatrixScaling(desc.width, desc.height, 1.0f) * XMMatrixTranslation(desc.positionX, desc.positionY, desc.depth);
+
+	SpriteTransformData transformData{ world, m_matView, m_matProjection };
+	ID3D11Buffer* transformBuffer = d3d::CreateConstantBuffer(m_pDevice, &transformData, sizeof(SpriteTransformData));
+	ID3D11Buffer* spriteBuffer = d3d::CreateConstantBuffer(m_pDevice, &spriteData, sizeof(SpriteData));
+
+	d3d::BindVertexConstantBuffer(m_pDeviceContext, transformBuffer, &transformData, sizeof(SpriteTransformData), 0);
+	d3d::BindPixelConstantBuffer(m_pDeviceContext, spriteBuffer, &spriteData, sizeof(SpriteData), 0);
+	m_pDeviceContext->DrawIndexed(6, 0, 0);
+
+	transformBuffer->Release();
+	spriteBuffer->Release();
 }
 

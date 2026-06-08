@@ -3,6 +3,7 @@
 #include "d3d.h"
 #include "d3dcompiler.h"
 #include <string>
+#include <unordered_map>
 
 using namespace DirectX;
 
@@ -30,11 +31,15 @@ public:
 
 	void LoadTexture(const WCHAR* textureFile) override;
 	void DrawBlockGrid(const BlockGridDesc& desc) override;
+	void DrawSprite(const SpriteDesc& desc) override;
 
 private:
 	void InitializePipeline();
 	void ReleasePipeline();
+	void ReleaseTextures();
 	void LoadPipelineShader(const WCHAR* shaderFile);
+	ID3D11ShaderResourceView* GetTexture(const WCHAR* textureFile);
+	void DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* texture);
 
 	ID3D11Device* m_pDevice;
 	ID3D11DeviceContext* m_pDeviceContext;
@@ -45,6 +50,7 @@ private:
 	ID3D11RenderTargetView* m_pRenderTargetView;
 	ID3DBlob* m_pVertexShaderBlob = nullptr;
 	RenderPipeline m_pipeline;
+	std::unordered_map<std::wstring, ID3D11ShaderResourceView*> m_textureMap;
 
 	FLOAT m_clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 

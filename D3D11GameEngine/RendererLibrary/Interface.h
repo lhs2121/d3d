@@ -28,6 +28,20 @@ struct BlockGridDesc
 	float originY = 0.0f;
 };
 
+struct SpriteDesc
+{
+	const WCHAR* textureFile = nullptr;
+	float positionX = 0.0f;
+	float positionY = 0.0f;
+	float width = 16.0f;
+	float height = 16.0f;
+	int atlasColumns = 1;
+	int atlasRows = 1;
+	int tileIndex = 0;
+	int flipX = 0;
+	float depth = 0.0f;
+};
+
 struct IRenderer
 {
 	virtual void Initialize(UINT winSizeX, UINT winSizeY, HWND& hwnd) = 0;
@@ -37,6 +51,7 @@ struct IRenderer
 
 	virtual void LoadTexture(const WCHAR* textureFile) = 0;
 	virtual void DrawBlockGrid(const BlockGridDesc& desc) = 0;
+	virtual void DrawSprite(const SpriteDesc& desc) = 0;
 };
 
 extern "C" RENDERERLIBRARY_API void CreateRenderer(IRenderer** ppRenderer);
