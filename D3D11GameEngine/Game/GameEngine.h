@@ -1,9 +1,10 @@
 #pragma once
 #include <Windows.h>
-#include <BaseLibrary/Interface.h>
-#include <InputLibrary/Interface.h>
-#include <RendererLibrary/Interface.h>
-#include <WindowLibrary/Interface.h>
+#include <commonlib/Interface.h>
+#include <inputlib/Interface.h>
+#include <collib/Interface.h>
+#include <rendererlib/Interface.h>
+#include <windowlib/Interface.h>
 #include <vector>
 
 class GameEngine : public IEngine
@@ -27,10 +28,14 @@ private:
 	void InitializeWorld();
 	void UpdatePlayer(float deltaTime);
 	void DrawWorld();
+	void DrawHoveredBlockOutline();
+	bool GetHoveredBlockTile(int& tileX, int& tileY) const;
+	collib::AABB GetPlayerAABB(float playerX, float playerY) const;
+	collib::AABB GetTileAABB(int tileX, int tileY) const;
 	bool IsKeyHeld(int keyCode);
 	bool IsSolidTile(int tileX, int tileY) const;
-	bool IsSolidAt(float worldX, float worldY) const;
-	bool IsPlayerBlocked(float playerX, float playerY) const;
+	bool IsAABBBlocked(const collib::AABB& box, float inset) const;
+	bool IsGroundBelowPlayer(float playerX, float playerY) const;
 	int WorldToTileX(float worldX) const;
 	int WorldToTileY(float worldY) const;
 	float TileLeft(int tileX) const;

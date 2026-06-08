@@ -11,10 +11,10 @@ namespace
 
 	const WCHAR* WalkTextures[] =
 	{
-		L"Assets\\Character\\walk1.0.png",
-		L"Assets\\Character\\walk1.1.png",
-		L"Assets\\Character\\walk1.2.png",
-		L"Assets\\Character\\walk1.3.png",
+		L"assets\\Character\\walk1.0.png",
+		L"assets\\Character\\walk1.1.png",
+		L"assets\\Character\\walk1.2.png",
+		L"assets\\Character\\walk1.3.png",
 	};
 }
 
@@ -34,11 +34,11 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 	m_pInputObject->Initailize();
 	m_pInputObject->AddUser(this);
 
-	m_pRenderer->LoadTexture(L"Assets\\Texture\\block_atlas.png");
-	m_pRenderer->LoadTexture(L"Assets\\Character\\stand.png");
+	m_pRenderer->LoadTexture(L"assets\\Texture\\block_atlas.png");
+	m_pRenderer->LoadTexture(L"assets\\Character\\stand.png");
 	for (const WCHAR* walkTexture : WalkTextures)
 		m_pRenderer->LoadTexture(walkTexture);
-	m_pRenderer->LoadTexture(L"Assets\\Character\\jump.0.png");
+	m_pRenderer->LoadTexture(L"assets\\Character\\jump.0.png");
 
 	InitializeWorld();
 
@@ -105,8 +105,8 @@ void GameEngine::UpdatePlayer(float deltaTime)
 	const float jumpSpeed = 470.0f;
 	const float gravity = -1150.0f;
 	const float maxFallSpeed = -780.0f;
-	const float halfWidth = m_playerCollisionWidth * 0.5f;
-	const float halfHeight = m_playerCollisionHeight * 0.5f;
+	const float collisionInset = 0.5f;
+	const float skin = 0.02f;
 
 	float move = 0.0f;
 	if (IsKeyHeld(KeyA))
@@ -119,20 +119,21 @@ void GameEngine::UpdatePlayer(float deltaTime)
 	else if (move > 0.0f)
 		m_player.facing = 1;
 
-	const float nextX = m_player.x + move * moveSpeed * deltaTime;
-	if (!IsPlayerBlocked(nextX, m_player.y))
+	const float deltaX = move * moveSpeed * deltaTime;
+	const float nextX = m_player.x + deltaX;
+	if (!IsAABBBlocked(GetPlayerAABB(nextX, m_player.y), collisionInset))
 	{
 		m_player.x = nextX;
 	}
-	else if (move > 0.0f)
+	else if (deltaX > 0.0f)
 	{
-		const int tileX = WorldToTileX(nextX + halfWidth);
-		m_player.x = TileLeft(tileX) - halfWidth - 0.02f;
+		const int tileX = WorldToTileX(collib::Right(GetPlayerAABB(nextX, m_player.y)));
+		m_player.x = TileLeft(tileX) - m_playerCollisionWidth * 0.5f - skin;
 	}
-	else if (move < 0.0f)
+	else if (deltaX < 0.0f)
 	{
-		const int tileX = WorldToTileX(nextX - halfWidth);
-		m_player.x = TileRight(tileX) + halfWidth + 0.02f;
+		const int tileX = WorldToTileX(collib::Left(GetPlayerAABB(nextX, m_player.y)));
+		m_player.x = TileRight(tileX) + m_playerCollisionWidth * 0.5f + skin;
 	}
 
 	if (m_pInputObject->IsDown(KeyW, this) && m_player.onGround)
@@ -140,33 +141,49 @@ void GameEngine::UpdatePlayer(float deltaTime)
 		m_player.velocityY = jumpSpeed;
 		m_player.onGround = false;
 	}
-
-	float frameGravity = gravity;
-	if (IsKeyHeld(KeyS) && m_player.velocityY < 0.0f)
-		frameGravity *= 1.8f;
-
-	m_player.velocityY += frameGravity * deltaTime;
-	if (m_player.velocityY < maxFallSpeed)
-		m_player.velocityY = maxFallSpeed;
-
-	const float nextY = m_player.y + m_player.velocityY * deltaTime;
-	if (!IsPlayerBlocked(m_player.x, nextY))
+	else if (m_player.onGround)
 	{
-		m_player.y = nextY;
-		m_player.onGround = false;
+		if (IsGroundBelowPlayer(m_player.x, m_player.y))
+		{
+			m_player.velocityY = 0.0f;
+		}
+		else
+		{
+			m_player.onGround = false;
+		}
 	}
-	else if (m_player.velocityY < 0.0f)
+
+	if (!m_player.onGround)
 	{
-		const int tileY = WorldToTileY(nextY - halfHeight);
-		m_player.y = TileTop(tileY) + halfHeight + 0.02f;
-		m_player.velocityY = 0.0f;
-		m_player.onGround = true;
-	}
-	else if (m_player.velocityY > 0.0f)
-	{
-		const int tileY = WorldToTileY(nextY + halfHeight);
-		m_player.y = TileBottom(tileY) - halfHeight - 0.02f;
-		m_player.velocityY = 0.0f;
+		float frameGravity = gravity;
+		if (IsKeyHeld(KeyS) && m_player.velocityY < 0.0f)
+			frameGravity *= 1.8f;
+
+		m_player.velocityY += frameGravity * deltaTime;
+		if (m_player.velocityY < maxFallSpeed)
+			m_player.velocityY = maxFallSpeed;
+
+		const float deltaY = m_player.velocityY * deltaTime;
+		const float nextY = m_player.y + deltaY;
+		if (!IsAABBBlocked(GetPlayerAABB(m_player.x, nextY), collisionInset))
+		{
+			m_player.y = nextY;
+			m_player.onGround = false;
+		}
+		else if (deltaY < 0.0f)
+		{
+			const int tileY = WorldToTileY(collib::Bottom(GetPlayerAABB(m_player.x, nextY)));
+			m_player.y = TileTop(tileY) + m_playerCollisionHeight * 0.5f + skin;
+			m_player.velocityY = 0.0f;
+			m_player.onGround = true;
+		}
+		else if (deltaY > 0.0f)
+		{
+			const int tileY = WorldToTileY(collib::Top(GetPlayerAABB(m_player.x, nextY)));
+			m_player.y = TileBottom(tileY) - m_playerCollisionHeight * 0.5f - skin;
+			m_player.velocityY = 0.0f;
+			m_player.onGround = false;
+		}
 	}
 
 	m_player.animationTime += deltaTime;
@@ -177,7 +194,7 @@ void GameEngine::UpdatePlayer(float deltaTime)
 void GameEngine::DrawWorld()
 {
 	BlockGridDesc gridDesc;
-	gridDesc.textureFile = L"Assets\\Texture\\block_atlas.png";
+	gridDesc.textureFile = L"assets\\Texture\\block_atlas.png";
 	gridDesc.tiles = m_blocks.data();
 	gridDesc.width = m_blockWidth;
 	gridDesc.height = m_blockHeight;
@@ -188,6 +205,7 @@ void GameEngine::DrawWorld()
 	gridDesc.originY = m_worldOriginY;
 
 	m_pRenderer->DrawBlockGrid(gridDesc);
+	DrawHoveredBlockOutline();
 
 	const bool wantsLeft = IsKeyHeld(KeyA);
 	const bool wantsRight = IsKeyHeld(KeyD);
@@ -203,7 +221,7 @@ void GameEngine::DrawWorld()
 
 	if (!m_player.onGround)
 	{
-		playerDesc.textureFile = L"Assets\\Character\\jump.0.png";
+		playerDesc.textureFile = L"assets\\Character\\jump.0.png";
 	}
 	else if (isMoving)
 	{
@@ -212,13 +230,86 @@ void GameEngine::DrawWorld()
 	}
 	else
 	{
-		playerDesc.textureFile = L"Assets\\Character\\stand.png";
+		playerDesc.textureFile = L"assets\\Character\\stand.png";
 		playerDesc.atlasColumns = 4;
 		playerDesc.atlasRows = 1;
 		playerDesc.tileIndex = static_cast<int>(m_player.animationTime / 0.24f) % 4;
 	}
 
 	m_pRenderer->DrawSprite(playerDesc);
+}
+
+void GameEngine::DrawHoveredBlockOutline()
+{
+	int tileX = 0;
+	int tileY = 0;
+	if (!GetHoveredBlockTile(tileX, tileY))
+		return;
+
+	RectOutlineDesc outlineDesc;
+	outlineDesc.positionX = m_worldOriginX + tileX * m_tileSize - m_cameraX;
+	outlineDesc.positionY = m_worldOriginY - tileY * m_tileSize;
+	outlineDesc.width = m_tileSize;
+	outlineDesc.height = m_tileSize;
+	outlineDesc.thickness = 2.0f;
+	outlineDesc.depth = -0.5f;
+
+	m_pRenderer->DrawRectOutline(outlineDesc);
+}
+
+bool GameEngine::GetHoveredBlockTile(int& tileX, int& tileY) const
+{
+	if (m_pWindowObject == nullptr)
+		return false;
+
+	HWND* hwnd = m_pWindowObject->GetHWND();
+	if (hwnd == nullptr || *hwnd == nullptr)
+		return false;
+
+	POINT cursorPosition = {};
+	if (!GetCursorPos(&cursorPosition) || !ScreenToClient(*hwnd, &cursorPosition))
+		return false;
+
+	const float windowWidth = m_pWindowObject->GetWidth();
+	const float windowHeight = m_pWindowObject->GetHeight();
+	if (windowWidth <= 0.0f || windowHeight <= 0.0f)
+		return false;
+
+	if (cursorPosition.x < 0 || cursorPosition.y < 0 ||
+		cursorPosition.x >= windowWidth || cursorPosition.y >= windowHeight)
+	{
+		return false;
+	}
+
+	constexpr float renderCameraDistance = 500.0f;
+	constexpr float renderFovYDegrees = 60.0f;
+	const float viewHalfHeight = std::tan((renderFovYDegrees * Deg2Rad) * 0.5f) * renderCameraDistance;
+	const float viewHalfWidth = viewHalfHeight * (windowWidth / windowHeight);
+	const float normalizedX = (static_cast<float>(cursorPosition.x) / windowWidth) * 2.0f - 1.0f;
+	const float normalizedY = 1.0f - (static_cast<float>(cursorPosition.y) / windowHeight) * 2.0f;
+	const float worldX = normalizedX * viewHalfWidth + m_cameraX;
+	const float worldY = normalizedY * viewHalfHeight;
+
+	tileX = WorldToTileX(worldX);
+	tileY = WorldToTileY(worldY);
+	if (tileX < 0 || tileX >= m_blockWidth || tileY < 0 || tileY >= m_blockHeight)
+		return false;
+
+	return m_blocks[tileY * m_blockWidth + tileX].visible != 0;
+}
+
+collib::AABB GameEngine::GetPlayerAABB(float playerX, float playerY) const
+{
+	return collib::MakeAABB(playerX, playerY, m_playerCollisionWidth, m_playerCollisionHeight);
+}
+
+collib::AABB GameEngine::GetTileAABB(int tileX, int tileY) const
+{
+	return collib::MakeAABB(
+		m_worldOriginX + tileX * m_tileSize,
+		m_worldOriginY - tileY * m_tileSize,
+		m_tileSize,
+		m_tileSize);
 }
 
 bool GameEngine::IsKeyHeld(int keyCode)
@@ -236,21 +327,49 @@ bool GameEngine::IsSolidTile(int tileX, int tileY) const
 	return m_blocks[tileY * m_blockWidth + tileX].visible != 0;
 }
 
-bool GameEngine::IsSolidAt(float worldX, float worldY) const
+bool GameEngine::IsAABBBlocked(const collib::AABB& box, float inset) const
 {
-	return IsSolidTile(WorldToTileX(worldX), WorldToTileY(worldY));
+	const collib::AABB testBox = collib::Inset(box, inset, inset);
+	int startX = WorldToTileX(collib::Left(testBox));
+	int endX = WorldToTileX(collib::Right(testBox));
+	int startY = WorldToTileY(collib::Top(testBox));
+	int endY = WorldToTileY(collib::Bottom(testBox));
+	if (startX > endX)
+	{
+		const int temp = startX;
+		startX = endX;
+		endX = temp;
+	}
+	if (startY > endY)
+	{
+		const int temp = startY;
+		startY = endY;
+		endY = temp;
+	}
+
+	for (int y = startY; y <= endY; ++y)
+	{
+		for (int x = startX; x <= endX; ++x)
+		{
+			if (!IsSolidTile(x, y))
+				continue;
+
+			if (collib::Intersects(testBox, GetTileAABB(x, y)))
+				return true;
+		}
+	}
+
+	return false;
 }
 
-bool GameEngine::IsPlayerBlocked(float playerX, float playerY) const
+bool GameEngine::IsGroundBelowPlayer(float playerX, float playerY) const
 {
-	const float halfWidth = m_playerCollisionWidth * 0.5f;
-	const float halfHeight = m_playerCollisionHeight * 0.5f;
-	const float inset = 0.5f;
-
-	return IsSolidAt(playerX - halfWidth + inset, playerY - halfHeight + inset) ||
-		IsSolidAt(playerX + halfWidth - inset, playerY - halfHeight + inset) ||
-		IsSolidAt(playerX - halfWidth + inset, playerY + halfHeight - inset) ||
-		IsSolidAt(playerX + halfWidth - inset, playerY + halfHeight - inset);
+	const float inset = 1.0f;
+	const float probeDistance = 1.0f;
+	const float probeWidth = m_playerCollisionWidth - inset * 2.0f;
+	const float probeY = playerY - m_playerCollisionHeight * 0.5f - probeDistance * 0.5f;
+	const collib::AABB groundProbe = collib::MakeAABB(playerX, probeY, probeWidth, probeDistance);
+	return IsAABBBlocked(groundProbe, 0.0f);
 }
 
 int GameEngine::WorldToTileX(float worldX) const

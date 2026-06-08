@@ -1,9 +1,9 @@
 #include "pch.h"
 #include <Windows.h>
-#include <InputLibrary/Interface.h>
-#include <BaseLibrary/Interface.h>
-#include <RendererLibrary/Interface.h>
-#include <WindowLibrary/Interface.h>
+#include <inputlib/Interface.h>
+#include <commonlib/Interface.h>
+#include <rendererlib/Interface.h>
+#include <windowlib/Interface.h>
 #include "GameEngine.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,

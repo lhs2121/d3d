@@ -5,8 +5,9 @@
 #include <vector>
 #include <list>
 
-#include <BaseLibrary/Interface.h>
-#include <InputLibrary/Interface.h>
-#include <WindowLibrary/Interface.h>
-#include <RendererLibrary/Interface.h>
+#include <commonlib/Interface.h>
+#include <inputlib/Interface.h>
+#include <collib/Interface.h>
+#include <windowlib/Interface.h>
+#include <rendererlib/Interface.h>
 		 
