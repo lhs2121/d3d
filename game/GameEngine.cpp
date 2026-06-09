@@ -11,10 +11,10 @@ namespace
 
 	const WCHAR* WalkTextures[] =
 	{
-		L"assets\\Character\\walk1.0.png",
-		L"assets\\Character\\walk1.1.png",
-		L"assets\\Character\\walk1.2.png",
-		L"assets\\Character\\walk1.3.png",
+		L"assets\\char\\walk1.0.png",
+		L"assets\\char\\walk1.1.png",
+		L"assets\\char\\walk1.2.png",
+		L"assets\\char\\walk1.3.png",
 	};
 }
 
@@ -34,11 +34,11 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 	m_pInputObject->Initailize();
 	m_pInputObject->AddUser(this);
 
-	m_pRenderer->LoadTexture(L"assets\\Texture\\block_atlas.png");
-	m_pRenderer->LoadTexture(L"assets\\Character\\stand.png");
+	m_pRenderer->LoadTexture(L"assets\\texture\\block_atlas.png");
+	m_pRenderer->LoadTexture(L"assets\\char\\stand.png");
 	for (const WCHAR* walkTexture : WalkTextures)
 		m_pRenderer->LoadTexture(walkTexture);
-	m_pRenderer->LoadTexture(L"assets\\Character\\jump.0.png");
+	m_pRenderer->LoadTexture(L"assets\\char\\jump.0.png");
 
 	InitializeWorld();
 
@@ -194,7 +194,7 @@ void GameEngine::UpdatePlayer(float deltaTime)
 void GameEngine::DrawWorld()
 {
 	BlockGridDesc gridDesc;
-	gridDesc.textureFile = L"assets\\Texture\\block_atlas.png";
+	gridDesc.textureFile = L"assets\\texture\\block_atlas.png";
 	gridDesc.tiles = m_blocks.data();
 	gridDesc.width = m_blockWidth;
 	gridDesc.height = m_blockHeight;
@@ -221,7 +221,7 @@ void GameEngine::DrawWorld()
 
 	if (!m_player.onGround)
 	{
-		playerDesc.textureFile = L"assets\\Character\\jump.0.png";
+		playerDesc.textureFile = L"assets\\char\\jump.0.png";
 	}
 	else if (isMoving)
 	{
@@ -230,7 +230,7 @@ void GameEngine::DrawWorld()
 	}
 	else
 	{
-		playerDesc.textureFile = L"assets\\Character\\stand.png";
+		playerDesc.textureFile = L"assets\\char\\stand.png";
 		playerDesc.atlasColumns = 4;
 		playerDesc.atlasRows = 1;
 		playerDesc.tileIndex = static_cast<int>(m_player.animationTime / 0.24f) % 4;

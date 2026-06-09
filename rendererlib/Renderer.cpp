@@ -203,7 +203,7 @@ void Renderer::InitializePipeline()
 	m_pipeline.pBlendState = d3d::CreateBlendState(m_pDevice);
 	m_pipeline.pDepthStencilState = d3d::CreateDepthStencilState(m_pDevice);
 
-	LoadPipelineShader(L"assets\\Shaders\\BasicSprite2DShader.hlsl");
+	LoadPipelineShader(L"assets\\shaders\\BasicSprite2DShader.hlsl");
 	CreateWhiteTexture();
 
 	D3D11_INPUT_ELEMENT_DESC iaDesc[] =
