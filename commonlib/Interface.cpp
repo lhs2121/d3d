@@ -1,14 +1,13 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "Interface.h"
-#include "TimeObject.h"
+#include "Timer.h"
 
-void CreateTimeObject(ITimeObject** ppTimeObject)
+void CreateTimer(ITimer** ppTimer)
 {
-	*ppTimeObject = new CTimeObject();
+	*ppTimer = new Timer();
 }
 
-void DeleteTimeObject(ITimeObject* pTimeObject)
+void DeleteTimer(ITimer* timer)
 {
-	CTimeObject* pCast =(CTimeObject*)pTimeObject;
-	delete pCast;
+	delete static_cast<Timer*>(timer);
 }

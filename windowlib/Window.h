@@ -1,15 +1,15 @@
-#pragma once
-#include "interface.h"
+﻿#pragma once
+#include "Interface.h"
 
-class CWindowObject : public IWindowObject
+class Window : public IWindow
 {
 public:
-	CWindowObject();
-	~CWindowObject();
+	Window();
+	~Window();
 
-	void Initialize(const char* szTitle, float posX, float posY, float width, float height, const HINSTANCE hInstance, IEngine* pEngine) override;
+	void Initialize(const char* szTitle, float posX, float posY, float width, float height, const HINSTANCE hInstance, IGameLoop* gameLoop) override;
 
-	void MessageLoop() override;
+	void RunMessageLoop() override;
 
 	const char* GetTitle() override { return m_szTitle; }
 
@@ -39,5 +39,5 @@ private:
 	HINSTANCE m_hInstance;
 	HWND m_hWnd;
 	HCURSOR m_hCursor = nullptr;
-	IEngine* m_pEngine;
+	IGameLoop* m_gameLoop;
 };

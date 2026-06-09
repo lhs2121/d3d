@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Windows.h"
 
 #ifdef WINDOWLIB_EXPORTS
@@ -7,17 +7,17 @@
 #define WINDOWLIB_API __declspec(dllimport)
 #endif 
 
-struct IEngine
+struct IGameLoop
 {
-	virtual void EngineUpdate() = 0;
-	virtual void EngineRelease() = 0;
+	virtual void Update() = 0;
+	virtual void Release() = 0;
 };
 
-struct IWindowObject
+struct IWindow
 {
-	virtual void Initialize(const char* szTitle, float posX, float posY, float width, float height, const HINSTANCE hInstance, IEngine* pEngine) = 0;
+	virtual void Initialize(const char* szTitle, float posX, float posY, float width, float height, const HINSTANCE hInstance, IGameLoop* gameLoop) = 0;
 
-    virtual void MessageLoop() = 0;
+	virtual void RunMessageLoop() = 0;
 
 	virtual const char* GetTitle() = 0;
 
@@ -37,6 +37,6 @@ struct IWindowObject
 
 };
 
-extern "C" WINDOWLIB_API void CreateWindowObject(IWindowObject** ppWindowObject);
+extern "C" WINDOWLIB_API void CreateWindowInstance(IWindow** ppWindow);
 
-extern "C" WINDOWLIB_API void DeleteWindowObject(IWindowObject* pWindowObject);
+extern "C" WINDOWLIB_API void DeleteWindowInstance(IWindow* window);

@@ -1,14 +1,13 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "Interface.h"
-#include "WindowObject.h"
+#include "Window.h"
 
-void CreateWindowObject(IWindowObject** ppWindowObject)
+void CreateWindowInstance(IWindow** ppWindow)
 {
-    *ppWindowObject = new CWindowObject;
+	*ppWindow = new Window;
 }
 
-void DeleteWindowObject(IWindowObject* pWindowObject)
+void DeleteWindowInstance(IWindow* window)
 {
-    CWindowObject* pCast = (CWindowObject*)pWindowObject;
-    delete pCast;
+	delete static_cast<Window*>(window);
 }

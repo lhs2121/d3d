@@ -1,34 +1,34 @@
-#pragma once
+﻿#pragma once
 #include "Interface.h"
 
 struct KeyState
 {
 	bool isDown = false;
-	bool isPress = false;
-	bool isUp = false;
+	bool isPressed = false;
+	bool isReleased = false;
 	bool isFree = false;
 };
 
-class CInputObject : public IInputObject
+class Input : public IInput
 {
 public:
-	CInputObject()
+	Input()
 	{
 		m_userList.reserve(100);
 	}
-	~CInputObject();
+	~Input();
 
-	void Initailize() override;
+	void Initialize() override;
 
-	void UpdateKeyStates() override;
+	void Update() override;
 
 	bool IsDown(int _keyCode, void* _userPtr) override;
-	bool IsPress(int _keyCode, void* _userPtr) override;
-	bool IsUp(int _keyCode, void* _userPtr) override;
+	bool IsPressed(int _keyCode, void* _userPtr) override;
+	bool IsReleased(int _keyCode, void* _userPtr) override;
 	bool IsFree(int _keyCode, void* _userPtr) override;
 	void AddUser(void* _UserPtr) override;
 
-	void CreateKey(int _keyCode);
+	void RegisterKey(int _keyCode);
 
 private:
 	std::unordered_map<int, KeyState*> m_keyStateMap;

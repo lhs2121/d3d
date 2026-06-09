@@ -39,6 +39,11 @@ struct SpriteDesc
 	int atlasRows = 1;
 	int tileIndex = 0;
 	int flipX = 0;
+	float rotationRadians = 0.0f;
+	float colorR = 1.0f;
+	float colorG = 1.0f;
+	float colorB = 1.0f;
+	float colorA = 1.0f;
 	float depth = 0.0f;
 };
 
@@ -49,6 +54,10 @@ struct RectOutlineDesc
 	float width = 16.0f;
 	float height = 16.0f;
 	float thickness = 2.0f;
+	float colorR = 1.0f;
+	float colorG = 1.0f;
+	float colorB = 1.0f;
+	float colorA = 1.0f;
 	float depth = -0.5f;
 };
 

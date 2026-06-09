@@ -1,7 +1,7 @@
 ﻿#include "pch.h"
-#include "WindowObject.h"
+#include "Window.h"
 
-CWindowObject* g_pWindowsObject = nullptr;
+Window* g_window = nullptr;
 
 namespace
 {
@@ -101,18 +101,18 @@ namespace
 	}
 }
 
-CWindowObject::CWindowObject()
+Window::Window()
 {
-	g_pWindowsObject = this;
+	g_window = this;
 }
 
-CWindowObject::~CWindowObject()
+Window::~Window()
 {
 	if (m_hCursor)
 		DestroyCursor(m_hCursor);
 }
 
-void CWindowObject::Initialize(const char* szTitle, float posX, float posY, float width, float height, const HINSTANCE hInstance, IEngine* pEngine)
+void Window::Initialize(const char* szTitle, float posX, float posY, float width, float height, const HINSTANCE hInstance, IGameLoop* gameLoop)
 {
 	m_szTitle = szTitle;
 	m_posX = posX;
@@ -120,7 +120,7 @@ void CWindowObject::Initialize(const char* szTitle, float posX, float posY, floa
 	m_width = width;
 	m_height = height;
 	m_hInstance = hInstance;
-	m_pEngine = pEngine;
+	m_gameLoop = gameLoop;
 	m_hCursor = CreatePixelGameCursor();
 
 	WNDCLASSEXA wcex = { 0 };
@@ -156,28 +156,28 @@ void CWindowObject::Initialize(const char* szTitle, float posX, float posY, floa
 	UpdateWindow(m_hWnd);
 }
 
-LRESULT CALLBACK CWindowObject::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
 	case WM_SETCURSOR:
 	{
-		if (g_pWindowsObject && g_pWindowsObject->m_hCursor && LOWORD(lParam) == HTCLIENT)
+		if (g_window && g_window->m_hCursor && LOWORD(lParam) == HTCLIENT)
 		{
-			SetCursor(g_pWindowsObject->m_hCursor);
+			SetCursor(g_window->m_hCursor);
 			return TRUE;
 		}
 		break;
 	}
 	case WM_DPICHANGED:
 	{
-		g_pWindowsObject->m_dpi = GetDpiForWindow(g_pWindowsObject->m_hWnd);
+		g_window->m_dpi = GetDpiForWindow(g_window->m_hWnd);
 		break;
 	}
 	case WM_SIZE:
 	{
-		g_pWindowsObject->m_width = LOWORD(lParam);
-		g_pWindowsObject->m_height = HIWORD(lParam);
+		g_window->m_width = LOWORD(lParam);
+		g_window->m_height = HIWORD(lParam);
 		break;
 	}
 	case WM_DESTROY:
@@ -189,7 +189,7 @@ LRESULT CALLBACK CWindowObject::WndProc(HWND hWnd, UINT message, WPARAM wParam, 
 	return 0;
 }
 
-void CWindowObject::MessageLoop()
+void Window::RunMessageLoop()
 {
 	MSG msg = {};
 
@@ -202,9 +202,9 @@ void CWindowObject::MessageLoop()
 		}
 		else
 		{
-			m_pEngine->EngineUpdate();
+			m_gameLoop->Update();
 		}
 	}
 
-	m_pEngine->EngineRelease();
+	m_gameLoop->Release();
 }

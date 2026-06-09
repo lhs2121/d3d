@@ -14,10 +14,10 @@
     <ClInclude Include="pch.h">
       <Filter>.h</Filter>
     </ClInclude>
-    <ClInclude Include="EngineMath.h">
+    <ClInclude Include="Math.h">
       <Filter>.h</Filter>
     </ClInclude>
-    <ClInclude Include="TimeObject.h">
+    <ClInclude Include="Timer.h">
       <Filter>.h</Filter>
     </ClInclude>
     <ClInclude Include="Interface.h">
@@ -28,10 +28,10 @@
     <ClCompile Include="pch.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
-    <ClCompile Include="EngineMath.cpp">
+    <ClCompile Include="Math.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
-    <ClCompile Include="TimeObject.cpp">
+    <ClCompile Include="Timer.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
     <ClCompile Include="Interface.cpp">

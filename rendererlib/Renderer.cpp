@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "Renderer.h"
 #include <cmath>
 
@@ -184,10 +184,10 @@ void Renderer::InitializePipeline()
 {
 	SimpleVertex Rect2D[] =
 	{
-		{ float4(-0.5f, 0.5f, 0.0f, 1.0f), float2(0.0f, 0.0f) },
-		{ float4(0.5f, 0.5f, 0.0f, 1.0f), float2(1.0f, 0.0f) },
-		{ float4(0.5f,-0.5f, 0.0f, 1.0f), float2(1.0f, 1.0f) },
-		{ float4(-0.5f,-0.5f, 0.0f, 1.0f), float2(0.0f, 1.0f) }
+		{ math::Vec4(-0.5f, 0.5f, 0.0f, 1.0f), math::Vec2(0.0f, 0.0f) },
+		{ math::Vec4(0.5f, 0.5f, 0.0f, 1.0f), math::Vec2(1.0f, 0.0f) },
+		{ math::Vec4(0.5f,-0.5f, 0.0f, 1.0f), math::Vec2(1.0f, 1.0f) },
+		{ math::Vec4(-0.5f,-0.5f, 0.0f, 1.0f), math::Vec2(0.0f, 1.0f) }
 	};
 
 	USHORT Rect2DIndex[]
@@ -596,10 +596,10 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 			const float bottom = centerY - halfTile;
 			const USHORT baseVertex = static_cast<USHORT>(m_gridVertices.size());
 
-			m_gridVertices.push_back({ float4(left, top, 0.0f, 1.0f), float2(u0, v0) });
-			m_gridVertices.push_back({ float4(right, top, 0.0f, 1.0f), float2(u1, v0) });
-			m_gridVertices.push_back({ float4(right, bottom, 0.0f, 1.0f), float2(u1, v1) });
-			m_gridVertices.push_back({ float4(left, bottom, 0.0f, 1.0f), float2(u0, v1) });
+			m_gridVertices.push_back({ math::Vec4(left, top, 0.0f, 1.0f), math::Vec2(u0, v0) });
+			m_gridVertices.push_back({ math::Vec4(right, top, 0.0f, 1.0f), math::Vec2(u1, v0) });
+			m_gridVertices.push_back({ math::Vec4(right, bottom, 0.0f, 1.0f), math::Vec2(u1, v1) });
+			m_gridVertices.push_back({ math::Vec4(left, bottom, 0.0f, 1.0f), math::Vec2(u0, v1) });
 
 			m_gridIndices.push_back(baseVertex);
 			m_gridIndices.push_back(baseVertex + 1);
@@ -646,10 +646,7 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 
 void Renderer::DrawSprite(const SpriteDesc& desc)
 {
-	if (desc.textureFile == nullptr)
-		return;
-
-	ID3D11ShaderResourceView* texture = GetTexture(desc.textureFile);
+	ID3D11ShaderResourceView* texture = desc.textureFile != nullptr ? GetTexture(desc.textureFile) : m_pipeline.pWhiteTexture;
 	if (texture == nullptr)
 		return;
 
@@ -674,6 +671,10 @@ void Renderer::DrawRectOutline(const RectOutlineDesc& desc)
 	SpriteDesc lineDesc;
 	lineDesc.textureFile = nullptr;
 	lineDesc.depth = desc.depth;
+	lineDesc.colorR = desc.colorR;
+	lineDesc.colorG = desc.colorG;
+	lineDesc.colorB = desc.colorB;
+	lineDesc.colorA = desc.colorA;
 
 	lineDesc.positionX = desc.positionX;
 	lineDesc.positionY = desc.positionY + halfHeight - halfThickness;
@@ -727,13 +728,16 @@ void Renderer::DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* 
 	SpriteData spriteData;
 	spriteData.ratio = { uvWidth, uvHeight };
 	spriteData.offset = { tileX * uvWidth, tileY * uvHeight };
+	spriteData.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
 	if (desc.flipX)
 	{
 		spriteData.ratio.x = -uvWidth;
 		spriteData.offset.x = (tileX + 1) * uvWidth;
 	}
 
-	XMMATRIX world = XMMatrixScaling(desc.width, desc.height, 1.0f) * XMMatrixTranslation(desc.positionX, desc.positionY, desc.depth);
+	XMMATRIX world = XMMatrixScaling(desc.width, desc.height, 1.0f) *
+		XMMatrixRotationZ(desc.rotationRadians) *
+		XMMatrixTranslation(desc.positionX, desc.positionY, desc.depth);
 
 	SpriteTransformData transformData{ world, m_matView, m_matProjection };
 	d3d::BindVertexConstantBuffer(m_pDeviceContext, m_pipeline.pTransformConstantBuffer, &transformData, sizeof(SpriteTransformData), 0);

@@ -7,8 +7,7 @@ void CreateRenderer(IRenderer** ppRenderer)
     *ppRenderer = new Renderer();
 }
 
-void DeleteRenderer(IRenderer* pRenderer)
+void DeleteRenderer(IRenderer* renderer)
 {
-    Renderer* pCast = (Renderer*)pRenderer;
-    delete pCast;
+	delete static_cast<Renderer*>(renderer);
 }

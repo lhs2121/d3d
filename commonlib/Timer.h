@@ -1,13 +1,13 @@
-#pragma once
+﻿#pragma once
 #include "Interface.h"
 #include <Windows.h>
 
-class CTimeObject : public ITimeObject
+class Timer : public ITimer
 {
 public:
 	void  Initialize() override;
-	void  CountStart() override;
-	float CountEnd() override;
+	void  Reset() override;
+	float GetElapsedSeconds() override;
 
 protected:
 	LARGE_INTEGER m_frequency;

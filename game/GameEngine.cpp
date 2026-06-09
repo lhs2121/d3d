@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "GameEngine.h"
 #include <cmath>
 
@@ -8,6 +8,9 @@ namespace
 	constexpr int KeyD = 0x44;
 	constexpr int KeyS = 0x53;
 	constexpr int KeyW = 0x57;
+	constexpr float BlockBreakDuration = 0.85f;
+	constexpr float BlockBreakRecoverDelay = 0.25f;
+	constexpr float BlockBreakRecoverDuration = 0.55f;
 
 	const WCHAR* WalkTextures[] =
 	{
@@ -16,54 +19,86 @@ namespace
 		L"assets\\char\\walk1.2.png",
 		L"assets\\char\\walk1.3.png",
 	};
+
+	struct CrackSegment
+	{
+		float startX;
+		float startY;
+		float endX;
+		float endY;
+		float appearAt;
+		float completeAt;
+	};
+
+	const CrackSegment CrackSegments[] =
+	{
+		{ -0.08f,  0.32f,  0.05f,  0.08f, 0.00f, 0.28f },
+		{  0.05f,  0.08f, -0.22f, -0.05f, 0.18f, 0.45f },
+		{  0.05f,  0.08f,  0.30f, -0.16f, 0.25f, 0.55f },
+		{ -0.02f, -0.04f, -0.36f, -0.30f, 0.40f, 0.70f },
+		{  0.16f, -0.03f,  0.38f,  0.23f, 0.48f, 0.78f },
+		{ -0.17f, -0.02f, -0.36f,  0.16f, 0.58f, 0.86f },
+		{  0.03f,  0.15f,  0.27f,  0.37f, 0.66f, 0.95f },
+	};
+
+	float Clamp01(float value)
+	{
+		if (value < 0.0f)
+			return 0.0f;
+		if (value > 1.0f)
+			return 1.0f;
+		return value;
+	}
 }
 
 void GameEngine::Start(const char* szTitle, float x, float y, float width, float height, HINSTANCE hInstance)
 {
-	CreateRenderer(&m_pRenderer);
+	CreateRenderer(&m_renderer);
 
-	CreateWindowObject(&m_pWindowObject);
-	m_pWindowObject->Initialize(szTitle, x, y, width, height, hInstance, this);
+	CreateWindowInstance(&m_window);
+	m_window->Initialize(szTitle, x, y, width, height, hInstance, this);
 
-	m_pRenderer->Initialize((UINT)m_pWindowObject->GetWidth(), (UINT)m_pWindowObject->GetHeight(), *m_pWindowObject->GetHWND());
+	m_renderer->Initialize((UINT)m_window->GetWidth(), (UINT)m_window->GetHeight(), *m_window->GetHWND());
 
-	CreateTimeObject(&m_pTimeObject);
-	m_pTimeObject->Initialize();
+	CreateTimer(&m_timer);
+	m_timer->Initialize();
 
-	CreateInputObject(&m_pInputObject);
-	m_pInputObject->Initailize();
-	m_pInputObject->AddUser(this);
+	CreateInput(&m_input);
+	m_input->Initialize();
+	m_input->AddUser(this);
 
-	m_pRenderer->LoadTexture(L"assets\\texture\\block_atlas.png");
-	m_pRenderer->LoadTexture(L"assets\\char\\stand.png");
+	m_renderer->LoadTexture(L"assets\\texture\\block_atlas.png");
+	m_renderer->LoadTexture(L"assets\\char\\stand.png");
 	for (const WCHAR* walkTexture : WalkTextures)
-		m_pRenderer->LoadTexture(walkTexture);
-	m_pRenderer->LoadTexture(L"assets\\char\\jump.0.png");
+		m_renderer->LoadTexture(walkTexture);
+	m_renderer->LoadTexture(L"assets\\char\\jump.0.png");
 
 	InitializeWorld();
 
-	m_pTimeObject->CountStart();
-	m_pWindowObject->MessageLoop();
+	m_timer->Reset();
+	m_window->RunMessageLoop();
 }
 
-void GameEngine::EngineUpdate()
+void GameEngine::Update()
 {
-	float deltaTime = m_pTimeObject->CountEnd();
-	m_pTimeObject->CountStart();
+	float deltaTime = m_timer->GetElapsedSeconds();
+	m_timer->Reset();
 	if (deltaTime > 0.05f)
 		deltaTime = 0.05f;
 
-	m_pInputObject->UpdateKeyStates();
+	m_input->Update();
+	UpdateBlockBreaking(deltaTime);
 	UpdatePlayer(deltaTime);
 
-	m_pRenderer->BeginFrame();
+	m_renderer->BeginFrame();
 	DrawWorld();
-	m_pRenderer->EndFrame();
+	m_renderer->EndFrame();
 }
 
 void GameEngine::InitializeWorld()
 {
 	m_blocks.assign(m_blockWidth * m_blockHeight, BlockTile{});
+	m_blockBreaks.assign(m_blockWidth * m_blockHeight, BlockBreakState{});
 
 	for (int y = 0; y < m_blockHeight; ++y)
 	{
@@ -136,7 +171,7 @@ void GameEngine::UpdatePlayer(float deltaTime)
 		m_player.x = TileRight(tileX) + m_playerCollisionWidth * 0.5f + skin;
 	}
 
-	if (m_pInputObject->IsDown(KeyW, this) && m_player.onGround)
+	if (m_input->IsDown(KeyW, this) && m_player.onGround)
 	{
 		m_player.velocityY = jumpSpeed;
 		m_player.onGround = false;
@@ -191,6 +226,62 @@ void GameEngine::UpdatePlayer(float deltaTime)
 	m_cameraX += (m_player.x - m_cameraX) * (cameraFollow > 1.0f ? 1.0f : cameraFollow);
 }
 
+void GameEngine::UpdateBlockBreaking(float deltaTime)
+{
+	int miningBlockIndex = -1;
+	if (m_input != nullptr && IsKeyHeld(VK_LBUTTON))
+	{
+		int tileX = 0;
+		int tileY = 0;
+		if (GetHoveredBlockTile(tileX, tileY))
+			miningBlockIndex = tileY * m_blockWidth + tileX;
+	}
+
+	for (size_t i = 0; i < m_blockBreaks.size(); ++i)
+	{
+		BlockBreakState& breakState = m_blockBreaks[i];
+
+		if (m_blocks[i].visible == 0)
+		{
+			breakState.active = 0;
+			breakState.progress = 0.0f;
+			breakState.idleTime = 0.0f;
+			continue;
+		}
+
+		if (static_cast<int>(i) == miningBlockIndex)
+		{
+			breakState.active = 1;
+			breakState.idleTime = 0.0f;
+			breakState.progress += deltaTime / BlockBreakDuration;
+			if (breakState.progress >= 1.0f)
+			{
+				m_blocks[i].visible = 0;
+				breakState.active = 0;
+				breakState.progress = 0.0f;
+				breakState.idleTime = 0.0f;
+			}
+
+			continue;
+		}
+
+		if (!breakState.active)
+			continue;
+
+		breakState.idleTime += deltaTime;
+		if (breakState.idleTime < BlockBreakRecoverDelay)
+			continue;
+
+		breakState.progress -= deltaTime / BlockBreakRecoverDuration;
+		if (breakState.progress <= 0.0f)
+		{
+			breakState.active = 0;
+			breakState.progress = 0.0f;
+			breakState.idleTime = 0.0f;
+		}
+	}
+}
+
 void GameEngine::DrawWorld()
 {
 	BlockGridDesc gridDesc;
@@ -204,7 +295,8 @@ void GameEngine::DrawWorld()
 	gridDesc.originX = m_worldOriginX - m_cameraX;
 	gridDesc.originY = m_worldOriginY;
 
-	m_pRenderer->DrawBlockGrid(gridDesc);
+	m_renderer->DrawBlockGrid(gridDesc);
+	DrawBlockCracks();
 	DrawHoveredBlockOutline();
 
 	const bool wantsLeft = IsKeyHeld(KeyA);
@@ -236,7 +328,67 @@ void GameEngine::DrawWorld()
 		playerDesc.tileIndex = static_cast<int>(m_player.animationTime / 0.24f) % 4;
 	}
 
-	m_pRenderer->DrawSprite(playerDesc);
+	m_renderer->DrawSprite(playerDesc);
+}
+
+void GameEngine::DrawBlockCracks()
+{
+	for (int y = 0; y < m_blockHeight; ++y)
+	{
+		for (int x = 0; x < m_blockWidth; ++x)
+		{
+			const int blockIndex = y * m_blockWidth + x;
+			const BlockBreakState& breakState = m_blockBreaks[blockIndex];
+			if (!breakState.active || m_blocks[blockIndex].visible == 0)
+				continue;
+
+			const float progress = Clamp01(breakState.progress);
+			const float centerX = m_worldOriginX + x * m_tileSize - m_cameraX;
+			const float centerY = m_worldOriginY - y * m_tileSize;
+			const float thickness = 1.25f + progress * 1.75f;
+			const float alpha = 0.35f + progress * 0.55f;
+
+			for (const CrackSegment& segment : CrackSegments)
+			{
+				if (progress <= segment.appearAt)
+					continue;
+
+				const float segmentProgress = Clamp01((progress - segment.appearAt) / (segment.completeAt - segment.appearAt));
+				const float startX = centerX + segment.startX * m_tileSize;
+				const float startY = centerY + segment.startY * m_tileSize;
+				const float fullEndX = centerX + segment.endX * m_tileSize;
+				const float fullEndY = centerY + segment.endY * m_tileSize;
+				const float endX = startX + (fullEndX - startX) * segmentProgress;
+				const float endY = startY + (fullEndY - startY) * segmentProgress;
+
+				DrawCrackLine(startX, startY, endX, endY, thickness, alpha);
+			}
+		}
+	}
+}
+
+void GameEngine::DrawCrackLine(float startX, float startY, float endX, float endY, float thickness, float alpha)
+{
+	const float deltaX = endX - startX;
+	const float deltaY = endY - startY;
+	const float length = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+	if (length < 0.1f)
+		return;
+
+	SpriteDesc crackDesc;
+	crackDesc.textureFile = nullptr;
+	crackDesc.positionX = (startX + endX) * 0.5f;
+	crackDesc.positionY = (startY + endY) * 0.5f;
+	crackDesc.width = length;
+	crackDesc.height = thickness;
+	crackDesc.rotationRadians = std::atan2(deltaY, deltaX);
+	crackDesc.colorR = 0.025f;
+	crackDesc.colorG = 0.022f;
+	crackDesc.colorB = 0.018f;
+	crackDesc.colorA = alpha;
+	crackDesc.depth = -0.65f;
+
+	m_renderer->DrawSprite(crackDesc);
 }
 
 void GameEngine::DrawHoveredBlockOutline()
@@ -254,15 +406,15 @@ void GameEngine::DrawHoveredBlockOutline()
 	outlineDesc.thickness = 2.0f;
 	outlineDesc.depth = -0.5f;
 
-	m_pRenderer->DrawRectOutline(outlineDesc);
+	m_renderer->DrawRectOutline(outlineDesc);
 }
 
 bool GameEngine::GetHoveredBlockTile(int& tileX, int& tileY) const
 {
-	if (m_pWindowObject == nullptr)
+	if (m_window == nullptr)
 		return false;
 
-	HWND* hwnd = m_pWindowObject->GetHWND();
+	HWND* hwnd = m_window->GetHWND();
 	if (hwnd == nullptr || *hwnd == nullptr)
 		return false;
 
@@ -270,8 +422,8 @@ bool GameEngine::GetHoveredBlockTile(int& tileX, int& tileY) const
 	if (!GetCursorPos(&cursorPosition) || !ScreenToClient(*hwnd, &cursorPosition))
 		return false;
 
-	const float windowWidth = m_pWindowObject->GetWidth();
-	const float windowHeight = m_pWindowObject->GetHeight();
+	const float windowWidth = m_window->GetWidth();
+	const float windowHeight = m_window->GetHeight();
 	if (windowWidth <= 0.0f || windowHeight <= 0.0f)
 		return false;
 
@@ -314,7 +466,7 @@ collib::AABB GameEngine::GetTileAABB(int tileX, int tileY) const
 
 bool GameEngine::IsKeyHeld(int keyCode)
 {
-	return m_pInputObject->IsDown(keyCode, this) || m_pInputObject->IsPress(keyCode, this);
+	return m_input->IsDown(keyCode, this) || m_input->IsPressed(keyCode, this);
 }
 
 bool GameEngine::IsSolidTile(int tileX, int tileY) const
@@ -404,10 +556,10 @@ float GameEngine::TileBottom(int tileY) const
 	return m_worldOriginY - tileY * m_tileSize - (m_tileSize * 0.5f);
 }
 
-void GameEngine::EngineRelease()
+void GameEngine::Release()
 {
-	DeleteInputObject(m_pInputObject);
-	DeleteRenderer(m_pRenderer);
-	DeleteTimeObject(m_pTimeObject);
-	DeleteWindowObject(m_pWindowObject);
+	DeleteInput(m_input);
+	DeleteRenderer(m_renderer);
+	DeleteTimer(m_timer);
+	DeleteWindowInstance(m_window);
 }

@@ -14,7 +14,7 @@
     <ClInclude Include="Interface.h">
       <Filter>.h</Filter>
     </ClInclude>
-    <ClInclude Include="WindowObject.h">
+    <ClInclude Include="Window.h">
       <Filter>.h</Filter>
     </ClInclude>
     <ClInclude Include="pch.h">
@@ -25,7 +25,7 @@
     <ClCompile Include="Interface.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
-    <ClCompile Include="WindowObject.cpp">
+    <ClCompile Include="Window.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
     <ClCompile Include="pch.cpp">

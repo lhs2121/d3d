@@ -1,10 +1,13 @@
-#include "pch.h"
-#include "EngineMath.h"
+﻿#include "pch.h"
+#include "Math.h"
 #include <math.h>
 
-void float4::operator*=(const float4x4& _other)
+namespace math
 {
-	float4 result;
+
+void Vec4::operator*=(const Mat4& _other)
+{
+	Vec4 result;
 	result.x = (x * _other.matrix[0][0]) + (y * _other.matrix[1][0]) + (z * _other.matrix[2][0]) + (w * _other.matrix[3][0]);
 	result.y = (x * _other.matrix[0][1]) + (y * _other.matrix[1][1]) + (z * _other.matrix[2][1]) + (w * _other.matrix[3][1]);
 	result.z = (x * _other.matrix[0][2]) + (y * _other.matrix[1][2]) + (z * _other.matrix[2][2]) + (w * _other.matrix[3][2]);
@@ -13,9 +16,9 @@ void float4::operator*=(const float4x4& _other)
 	*this = result;
 }
 
-float4 float4::operator*(const float4x4& _other)
+Vec4 Vec4::operator*(const Mat4& _other)
 {
-	float4 result;
+	Vec4 result;
 	result.x = (x * _other.matrix[0][0]) + (y * _other.matrix[1][0]) + (z * _other.matrix[2][0]) + (w * _other.matrix[3][0]);
 	result.y = (x * _other.matrix[0][1]) + (y * _other.matrix[1][1]) + (z * _other.matrix[2][1]) + (w * _other.matrix[3][1]);
 	result.z = (x * _other.matrix[0][2]) + (y * _other.matrix[1][2]) + (z * _other.matrix[2][2]) + (w * _other.matrix[3][2]);
@@ -24,9 +27,9 @@ float4 float4::operator*(const float4x4& _other)
 	return result;
 }
 
-float4 float4::normalize(float4& _other)
+Vec4 Vec4::normalize(Vec4& _other)
 {
-	float4 result;
+	Vec4 result;
 	result = _other;
 	float length = static_cast<float>(sqrt(_other.x * _other.x + _other.y * _other.y + _other.z * _other.z));
 
@@ -36,7 +39,7 @@ float4 float4::normalize(float4& _other)
 	return result;
 }
 
-void float4::normalize()
+void Vec4::normalize()
 {
 	float length = static_cast<float>(sqrt(x * x + y * y + z * z));
 	x /= length;
@@ -44,32 +47,32 @@ void float4::normalize()
 	z /= length;
 }
 
-float float4::distance(float4& __other) const
+float Vec4::distance(Vec4& __other) const
 {
-	float4 dis = *this - __other;
+	Vec4 dis = *this - __other;
 
 	return (float)sqrt((dis.x * dis.x) + (dis.y * dis.y));
 }
 
-void float4::rotate(float __radianian)
+void Vec4::rotate(float __radianian)
 {
-	float4x4 rz;
+	Mat4 rz;
 	rz.RotationZ(__radianian);
 
 	*this *= rz;
 }
 
-float4 float4::resolution(float _force, float __radianian)
+Vec4 Vec4::resolution(float _force, float __radianian)
 {
 	return { _force * cosf(__radianian),_force * sinf(__radianian) };
 }
 
-float float4::dot(float4& Left, float4& Right)
+float Vec4::dot(Vec4& Left, Vec4& Right)
 {
 	return Left.x * Right.x + Left.y * Right.y + Left.z * Right.z;
 }
 
-float4 float4::cross(float4& Left, float4& Right)
+Vec4 Vec4::cross(Vec4& Left, Vec4& Right)
 {
 	float x = Left.y * Right.z - Left.z * Right.y;
 	float y = Left.z * Right.x - Left.x * Right.z;
@@ -78,7 +81,7 @@ float4 float4::cross(float4& Left, float4& Right)
 	return { x,y,z,1 };
 }
 
-float4x4::float4x4(const float4x4& _other)
+Mat4::Mat4(const Mat4& _other)
 {
 	for (int i = 0; i < 16; i++)
 	{
@@ -86,9 +89,9 @@ float4x4::float4x4(const float4x4& _other)
 	}
 }
 
-float4x4 float4x4::operator*(const float4x4& _other)
+Mat4 Mat4::operator*(const Mat4& _other)
 {
-	float4x4 Result;
+	Mat4 Result;
 	Result.Zero();
 
 	for (size_t r = 0; r < 4; r++)
@@ -105,7 +108,7 @@ float4x4 float4x4::operator*(const float4x4& _other)
 	return Result;
 }
 
-void float4x4::operator*=(const float4x4& _other)
+void Mat4::operator*=(const Mat4& _other)
 {
 	for (size_t r = 0; r < 4; r++)
 	{
@@ -119,7 +122,7 @@ void float4x4::operator*=(const float4x4& _other)
 	}
 }
 
-void float4x4::Identity()
+void Mat4::Identity()
 {
 	Zero();
 	matrix[0][0] = 1.0f;
@@ -128,7 +131,7 @@ void float4x4::Identity()
 	matrix[3][3] = 1.0f;
 }
 
-void float4x4::Zero()
+void Mat4::Zero()
 {
 	for (int i = 0; i < 16; i++)
 	{
@@ -136,7 +139,7 @@ void float4x4::Zero()
 	}
 }
 
-void float4x4::TransPose()
+void Mat4::TransPose()
 {
 	for (int x = 0; x < 4; x++)
 	{
@@ -150,7 +153,7 @@ void float4x4::TransPose()
 }
 
 
-void float4x4::Position(const float4& _other)
+void Mat4::Position(const Vec4& _other)
 {
 	Identity();
 	matrix[3][0] = _other.x;
@@ -159,7 +162,7 @@ void float4x4::Position(const float4& _other)
 }
 
 
-void float4x4::Scale(const float4& _other)
+void Mat4::Scale(const Vec4& _other)
 {
 	Identity();
 	matrix[0][0] = _other.x;
@@ -167,7 +170,7 @@ void float4x4::Scale(const float4& _other)
 	matrix[2][2] = _other.z;
 }
 
-void float4x4::Rotation(const float4& _degreeree)
+void Mat4::Rotation(const Vec4& _degreeree)
 {
 	Identity();
 
@@ -175,17 +178,17 @@ void float4x4::Rotation(const float4& _degreeree)
 	float _radianianY = _degreeree.y * Deg2Rad;
 	float _radianianZ = _degreeree.z * Deg2Rad;
 
-	float4x4 ZRot;
+	Mat4 ZRot;
 	ZRot.RotationZ(_radianianZ);
-	float4x4 YRot;
+	Mat4 YRot;
 	YRot.RotationY(_radianianY);
-	float4x4 XRot;
+	Mat4 XRot;
 	XRot.RotationX(_radianianX);
 
 	*this = ZRot * XRot * YRot;
 }
 
-void float4x4::RotationX(const float _radian)
+void Mat4::RotationX(const float _radian)
 {
 	matrix[1][1] = cosf(_radian);
 	matrix[1][2] = -sinf(_radian);
@@ -193,7 +196,7 @@ void float4x4::RotationX(const float _radian)
 	matrix[2][2] = cosf(_radian);
 }
 
-void float4x4::RotationY(const float _radian)
+void Mat4::RotationY(const float _radian)
 {
 	matrix[0][0] = cosf(_radian);
 	matrix[0][2] = -sinf(_radian);
@@ -201,7 +204,7 @@ void float4x4::RotationY(const float _radian)
 	matrix[2][2] = cosf(_radian);
 }
 
-void float4x4::RotationZ(const float _radian)
+void Mat4::RotationZ(const float _radian)
 {
 	matrix[0][0] = cosf(_radian);
 	matrix[0][1] = sinf(_radian);
@@ -209,14 +212,14 @@ void float4x4::RotationZ(const float _radian)
 	matrix[1][1] = cosf(_radian);
 }
 
-void float4x4::View(float4& EyePos, float4& EyeDir, float4& EyeUp)
+void Mat4::View(Vec4& EyePos, Vec4& EyeDir, Vec4& EyeUp)
 {
 	Identity();
 
 	EyeDir.normalize();
 	EyeUp.normalize();
 
-	float4 EyeRight = float4::cross(EyeUp, EyeDir);
+	Vec4 EyeRight = Vec4::cross(EyeUp, EyeDir);
 
 	matrix[0][0] = EyeRight.x;
 	matrix[0][1] = EyeRight.y;
@@ -232,12 +235,12 @@ void float4x4::View(float4& EyePos, float4& EyeDir, float4& EyeUp)
 
 	TransPose();
 
-	float4 Pos = -EyePos;
-	matrix[3][0] = float4::dot(EyeRight, Pos);
-	matrix[3][1] = float4::dot(EyeUp, Pos);
-	matrix[3][2] = float4::dot(EyeDir, Pos);
+	Vec4 Pos = -EyePos;
+	matrix[3][0] = Vec4::dot(EyeRight, Pos);
+	matrix[3][1] = Vec4::dot(EyeUp, Pos);
+	matrix[3][2] = Vec4::dot(EyeDir, Pos);
 }
-void float4x4::Perspective(float FovYDegree, float Width, float Height, float Near, float Far)
+void Mat4::Perspective(float FovYDegree, float Width, float Height, float Near, float Far)
 {
 	Identity();
 
@@ -252,7 +255,7 @@ void float4x4::Perspective(float FovYDegree, float Width, float Height, float Ne
 	matrix[2][3] = 1;
 	matrix[3][3] = 0;
 }
-void float4x4::Orthographic(float Width, float Height, float Near, float Far)
+void Mat4::Orthographic(float Width, float Height, float Near, float Far)
 {
 	Identity();
 
@@ -262,7 +265,7 @@ void float4x4::Orthographic(float Width, float Height, float Near, float Far)
 	matrix[3][2] = Near / (Near - Far);
 }
 
-int math::digits(int _num)
+int digits(int _num)
 {
 	int result = 0;
 
@@ -274,7 +277,7 @@ int math::digits(int _num)
 	return result;
 }
 
-float math::clamp(float _num, float _max, float _min)
+float clamp(float _num, float _max, float _min)
 {
 	if (_num >= _max)
 	{
@@ -285,5 +288,7 @@ float math::clamp(float _num, float _max, float _min)
 		return _min;
 	}
 	return _num;
+}
+
 }
 

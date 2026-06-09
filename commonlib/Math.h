@@ -1,17 +1,17 @@
-#pragma once
+﻿#pragma once
 #include "Interface.h"
 
 constexpr float PI = 3.141592653f;
 constexpr float Deg2Rad = 3.141592653f / 180.0f;
 
-struct COMMONLIB_API math
+namespace math
 {
-	static int digits(int _num);
-	static float clamp(float _num, float _max, float _min);
-};
-struct float2
+	COMMONLIB_API int digits(int _num);
+	COMMONLIB_API float clamp(float _num, float _max, float _min);
+
+struct Vec2
 {
-	float2(float _x = 0, float _y = 0) : x(_x), y(_y) {}
+	Vec2(float _x = 0, float _y = 0) : x(_x), y(_y) {}
 
 	float x;
 	float y;
@@ -46,92 +46,92 @@ struct float2
 		return static_cast<int>(y / 2);
 	}
 
-	float2 operator+(const float2& _other) const
+	Vec2 operator+(const Vec2& _other) const
 	{
 		return { x + _other.x ,y + _other.y };
 	}
 
-	float2 operator+(const float2&& _other) const
+	Vec2 operator+(const Vec2&& _other) const
 	{
 		return { x + _other.x ,y + _other.y };
 	}
 
-	float2 operator-(const float2& _other) const
+	Vec2 operator-(const Vec2& _other) const
 	{
 		return { x - _other.x ,y - _other.y };
 	}
 
-	float2 operator-(const float2&& _other) const
+	Vec2 operator-(const Vec2&& _other) const
 	{
 		return { x - _other.x ,y - _other.y };
 	}
 
-	float2 operator-() const
+	Vec2 operator-() const
 	{
 		return { -x,-y };
 	}
 
-	float2 operator*(const float2& _other) const
+	Vec2 operator*(const Vec2& _other) const
 	{
 		return { x * _other.x ,y * _other.y };
 	}
 
-	float2 operator*(const float2&& _other) const
+	Vec2 operator*(const Vec2&& _other) const
 	{
 		return { x * _other.x ,y * _other.y };
 	}
 
-	float2 operator*(const float _other) const
+	Vec2 operator*(const float _other) const
 	{
 		return { x * _other,y * _other };
 	}
 
-	float2 operator/(const float2& _other) const
+	Vec2 operator/(const Vec2& _other) const
 	{
 		return { x / _other.x ,y / _other.y };
 	}
 
-	float2 operator/(const float2&& _other) const
+	Vec2 operator/(const Vec2&& _other) const
 	{
 		return { x / _other.x ,y / _other.y };
 	}
 
-	float2 operator/(float _other) const
+	Vec2 operator/(float _other) const
 	{
 		return { x / _other ,y / _other };
 	}
 
-	void operator+=(const float2& _other)
+	void operator+=(const Vec2& _other)
 	{
 		x += _other.x;
 		y += _other.y;
 	}
 
-	void operator+=(const float2&& _other)
+	void operator+=(const Vec2&& _other)
 	{
 		x += _other.x;
 		y += _other.y;
 	}
 
-	void operator-=(const float2& _other)
+	void operator-=(const Vec2& _other)
 	{
 		x -= _other.x;
 		y -= _other.y;
 	}
 
-	void operator-=(const float2&& _other)
+	void operator-=(const Vec2&& _other)
 	{
 		x -= _other.x;
 		y -= _other.y;
 	}
 
-	void operator*=(const float2& _other)
+	void operator*=(const Vec2& _other)
 	{
 		x *= _other.x;
 		y *= _other.y;
 	}
 
-	void operator*=(const float2&& _other)
+	void operator*=(const Vec2&& _other)
 	{
 		x *= _other.x;
 		y *= _other.y;
@@ -143,13 +143,13 @@ struct float2
 		y *= _other;
 	}
 
-	void operator/=(const float2& _other)
+	void operator/=(const Vec2& _other)
 	{
 		x /= _other.x;
 		y /= _other.y;
 	}
 
-	void operator/=(const float2&& _other)
+	void operator/=(const Vec2&& _other)
 	{
 		x /= _other.x;
 		y /= _other.y;
@@ -163,9 +163,9 @@ struct float2
 
 };
 
-struct float3
+struct Vec3
 {
-	float3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+	Vec3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
 
 	float x;
 	float y;
@@ -201,97 +201,97 @@ struct float3
 		return static_cast<int>(y / 2);
 	}
 
-	float3 operator+(const float3& _other) const
+	Vec3 operator+(const Vec3& _other) const
 	{
 		return { x + _other.x ,y + _other.y ,z + _other.z };
 	}
 
-	float3 operator+(const float3&& _other) const
+	Vec3 operator+(const Vec3&& _other) const
 	{
 		return { x + _other.x ,y + _other.y ,z + _other.z };
 	}
 
-	float3 operator-(const float3& _other) const
+	Vec3 operator-(const Vec3& _other) const
 	{
 		return { x - _other.x ,y - _other.y ,z - _other.z };
 	}
 
-	float3 operator-(const float3&& _other) const
+	Vec3 operator-(const Vec3&& _other) const
 	{
 		return { x - _other.x ,y - _other.y ,z - _other.z };
 	}
 
-	float3 operator-() const
+	Vec3 operator-() const
 	{
 		return { -x,-y,-z };
 	}
 
-	float3 operator*(const float3& _other) const
+	Vec3 operator*(const Vec3& _other) const
 	{
 		return { x * _other.x ,y * _other.y ,z * _other.z };
 	}
 
-	float3 operator*(const float3&& _other) const
+	Vec3 operator*(const Vec3&& _other) const
 	{
 		return { x * _other.x ,y * _other.y ,z * _other.z };
 	}
 
-	float3 operator*(const float _other) const
+	Vec3 operator*(const float _other) const
 	{
 		return { x * _other,y * _other,z * _other };
 	}
 
-	float3 operator/(const float3& _other) const
+	Vec3 operator/(const Vec3& _other) const
 	{
 		return { x / _other.x ,y / _other.y ,z / _other.z };
 	}
 
-	float3 operator/(const float3&& _other) const
+	Vec3 operator/(const Vec3&& _other) const
 	{
 		return { x / _other.x ,y / _other.y ,z / _other.z };
 	}
 
-	float3 operator/(float _other) const
+	Vec3 operator/(float _other) const
 	{
 		return { x / _other ,y / _other ,z / _other };
 	}
 
-	void operator+=(const float3& _other)
+	void operator+=(const Vec3& _other)
 	{
 		x += _other.x;
 		y += _other.y;
 		z += _other.z;
 	}
 
-	void operator+=(const float3&& _other)
+	void operator+=(const Vec3&& _other)
 	{
 		x += _other.x;
 		y += _other.y;
 		z += _other.z;
 	}
 
-	void operator-=(const float3& _other)
+	void operator-=(const Vec3& _other)
 	{
 		x -= _other.x;
 		y -= _other.y;
 		z -= _other.z;
 	}
 
-	void operator-=(const float3&& _other)
+	void operator-=(const Vec3&& _other)
 	{
 		x -= _other.x;
 		y -= _other.y;
 		z -= _other.z;
 	}
 
-	void operator*=(const float3& _other)
+	void operator*=(const Vec3& _other)
 	{
 		x *= _other.x;
 		y *= _other.y;
 		z *= _other.z;
 	}
 
-	void operator*=(const float3&& _other)
+	void operator*=(const Vec3&& _other)
 	{
 		x *= _other.x;
 		y *= _other.y;
@@ -305,14 +305,14 @@ struct float3
 		z *= _other;
 	}
 
-	void operator/=(const float3& _other)
+	void operator/=(const Vec3& _other)
 	{
 		x /= _other.x;
 		y /= _other.y;
 		z /= _other.z;
 	}
 
-	void operator/=(const float3&& _other)
+	void operator/=(const Vec3&& _other)
 	{
 		x /= _other.x;
 		y /= _other.y;
@@ -326,10 +326,10 @@ struct float3
 		z /= _other;
 	}
 };
-struct float4x4;
-struct COMMONLIB_API float4
+struct Mat4;
+struct COMMONLIB_API Vec4
 {
-	float4(float _x = 0, float _y = 0, float _z = 0, float _w = 1) : x(_x), y(_y), z(_z), w(_w) {}
+	Vec4(float _x = 0, float _y = 0, float _z = 0, float _w = 1) : x(_x), y(_y), z(_z), w(_w) {}
 
 	union
 	{
@@ -350,17 +350,17 @@ struct COMMONLIB_API float4
 		};
 	};
 
-	static float4 resolution(float _force, float __radianian);
+	static Vec4 resolution(float _force, float __radianian);
 
-	static float4 normalize(float4& __other);
+	static Vec4 normalize(Vec4& __other);
 
-	static float dot(float4& _left, float4& _right);
+	static float dot(Vec4& _left, Vec4& _right);
 
-	static float4 cross(float4& _left, float4& _right);
+	static Vec4 cross(Vec4& _left, Vec4& _right);
 
 	void normalize();
 
-	float distance(float4& __other) const;
+	float distance(Vec4& __other) const;
 
 	void rotate(float __radianian);
 
@@ -394,97 +394,97 @@ struct COMMONLIB_API float4
 		return static_cast<int>(y / 2);
 	}
 
-	float4 operator+(const float4& _other) const
+	Vec4 operator+(const Vec4& _other) const
 	{
 		return { x + _other.x ,y + _other.y ,z + _other.z ,w };
 	}
 
-	float4 operator+(const float4&& _other) const
+	Vec4 operator+(const Vec4&& _other) const
 	{
 		return { x + _other.x ,y + _other.y ,z + _other.z ,w };
 	}
 
-	float4 operator-(const float4& _other) const
+	Vec4 operator-(const Vec4& _other) const
 	{
 		return { x - _other.x ,y - _other.y ,z - _other.z ,w };
 	}
 
-	float4 operator-(const float4&& _other) const
+	Vec4 operator-(const Vec4&& _other) const
 	{
 		return { x - _other.x ,y - _other.y ,z - _other.z ,w };
 	}
 
-	float4 operator-() const
+	Vec4 operator-() const
 	{
 		return { -x,-y,-z ,w };
 	}
 
-	float4 operator*(const float4& _other) const
+	Vec4 operator*(const Vec4& _other) const
 	{
 		return { x * _other.x ,y * _other.y ,z * _other.z ,w };
 	}
 
-	float4 operator*(const float4&& _other) const
+	Vec4 operator*(const Vec4&& _other) const
 	{
 		return { x * _other.x ,y * _other.y ,z * _other.z ,w };
 	}
 
-	float4 operator*(const float _other) const
+	Vec4 operator*(const float _other) const
 	{
 		return { x * _other,y * _other,z * _other,w };
 	}
 
-	float4 operator/(const float4& _other) const
+	Vec4 operator/(const Vec4& _other) const
 	{
 		return { x / _other.x ,y / _other.y ,z / _other.z ,w };
 	}
 
-	float4 operator/(const float4&& _other) const
+	Vec4 operator/(const Vec4&& _other) const
 	{
 		return { x / _other.x ,y / _other.y ,z / _other.z ,w };
 	}
 
-	float4 operator/(float _other) const
+	Vec4 operator/(float _other) const
 	{
 		return { x / _other ,y / _other ,z / _other ,w };
 	}
 
-	void operator+=(const float4& _other)
+	void operator+=(const Vec4& _other)
 	{
 		x += _other.x;
 		y += _other.y;
 		z += _other.z;
 	}
 
-	void operator+=(const float4&& _other)
+	void operator+=(const Vec4&& _other)
 	{
 		x += _other.x;
 		y += _other.y;
 		z += _other.z;
 	}
 
-	void operator-=(const float4& _other)
+	void operator-=(const Vec4& _other)
 	{
 		x -= _other.x;
 		y -= _other.y;
 		z -= _other.z;
 	}
 
-	void operator-=(const float4&& _other)
+	void operator-=(const Vec4&& _other)
 	{
 		x -= _other.x;
 		y -= _other.y;
 		z -= _other.z;
 	}
 
-	void operator*=(const float4& _other)
+	void operator*=(const Vec4& _other)
 	{
 		x *= _other.x;
 		y *= _other.y;
 		z *= _other.z;
 	}
 
-	void operator*=(const float4&& _other)
+	void operator*=(const Vec4&& _other)
 	{
 		x *= _other.x;
 		y *= _other.y;
@@ -498,14 +498,14 @@ struct COMMONLIB_API float4
 		z *= _other;
 	}
 
-	void operator/=(const float4& _other)
+	void operator/=(const Vec4& _other)
 	{
 		x /= _other.x;
 		y /= _other.y;
 		z /= _other.z;
 	}
 
-	void operator/=(const float4&& _other)
+	void operator/=(const Vec4&& _other)
 	{
 		x /= _other.x;
 		y /= _other.y;
@@ -519,16 +519,16 @@ struct COMMONLIB_API float4
 		z /= _other;
 	}
 
-	void operator*=(const float4x4& _other);
+	void operator*=(const Mat4& _other);
 
-	float4 operator*(const float4x4& _other);
+	Vec4 operator*(const Mat4& _other);
 
 };
 
-struct COMMONLIB_API float4x4
+struct COMMONLIB_API Mat4
 {
-	float4x4() {}
-	float4x4(const float4x4& _other);
+	Mat4() {}
+	Mat4(const Mat4& _other);
 	union
 	{
 		float matrix[4][4] =
@@ -542,22 +542,23 @@ struct COMMONLIB_API float4x4
 		float matrix1D[16];
 	};
 
-	float4x4 operator*(const float4x4& _other);
-	void operator*=(const float4x4& _other);
+	Mat4 operator*(const Mat4& _other);
+	void operator*=(const Mat4& _other);
 
 	void Identity();
 	void Zero();
 	void TransPose();
 
-	void Position(const float4& _other);
-	void Scale(const float4& _other);
-	void Rotation(const float4& _degree);
+	void Position(const Vec4& _other);
+	void Scale(const Vec4& _other);
+	void Rotation(const Vec4& _degree);
 
 	void RotationX(const float _radian);
 	void RotationY(const float _radian);
 	void RotationZ(const float _radian);
 
-	void View(float4& _eyePos, float4& _eyeDir, float4& _eyeUp);
+	void View(Vec4& _eyePos, Vec4& _eyeDir, Vec4& _eyeUp);
 	void Perspective(float _fovYDegree, float width, float height, float _near, float _far);
 	void Orthographic(float _width, float _height, float _near, float _far);
 };
+}

@@ -14,7 +14,7 @@
     <ClInclude Include="pch.h">
       <Filter>.h</Filter>
     </ClInclude>
-    <ClInclude Include="InputObject.h">
+    <ClInclude Include="Input.h">
       <Filter>.h</Filter>
     </ClInclude>
     <ClInclude Include="Interface.h">
@@ -28,7 +28,7 @@
     <ClCompile Include="Interface.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
-    <ClCompile Include="InputObject.cpp">
+    <ClCompile Include="Input.cpp">
       <Filter>.cpp</Filter>
     </ClCompile>
   </ItemGroup>

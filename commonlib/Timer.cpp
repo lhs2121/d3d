@@ -1,17 +1,17 @@
-#include "pch.h"
-#include "TimeObject.h"
+﻿#include "pch.h"
+#include "Timer.h"
 
-void CTimeObject::Initialize()
+void Timer::Initialize()
 {
 	QueryPerformanceFrequency(&m_frequency);
 }
 
-void CTimeObject::CountStart()
+void Timer::Reset()
 {
 	QueryPerformanceCounter(&m_start);
 }
 
-float CTimeObject::CountEnd()
+float Timer::GetElapsedSeconds()
 {
 	QueryPerformanceCounter(&m_end);
 	float deltaTime = (m_end.QuadPart - m_start.QuadPart) / (float)m_frequency.QuadPart;

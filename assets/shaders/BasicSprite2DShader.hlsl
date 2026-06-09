@@ -33,6 +33,7 @@ cbuffer SpriteData : register(b0)
 {
     float2 ResizeRatio;
     float2 Offset;
+    float4 Color;
 }
 
 Texture2D Texture : register(t0);
@@ -46,5 +47,5 @@ float4 BasicSprite2DShader_PS(VS_OUTPUT input) : SV_Target
     
     float4 TexColor = Texture.Sample(Sampler, TexLocation);
     
-    return TexColor;
+    return TexColor * Color;
 }

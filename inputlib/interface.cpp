@@ -1,14 +1,13 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "Interface.h"
-#include "InputObject.h"
+#include "Input.h"
 
-void CreateInputObject(IInputObject** ppTimeObject)
+void CreateInput(IInput** ppInput)
 {
-	*ppTimeObject = new CInputObject();
+	*ppInput = new Input();
 }
 
-void DeleteInputObject(IInputObject* pTimeObject)
+void DeleteInput(IInput* input)
 {
-	CInputObject* pCast = (CInputObject*)pTimeObject;
-	delete pCast;
+	delete static_cast<Input*>(input);
 }

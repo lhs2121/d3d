@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #pragma warning(disable:4099)
 
 #ifdef COMMONLIB_EXPORTS 
@@ -8,7 +8,7 @@
 #endif
 
 #include <Windows.h>
-#include "EngineMath.h"
+#include "Math.h"
 
 namespace Debug
 {
@@ -17,12 +17,12 @@ namespace Debug
 	extern "C" COMMONLIB_API void MsgBoxAssert(const char* errorMsg);
 }
 
-struct ITimeObject
+struct ITimer
 {
 	virtual void  Initialize() = 0;
-	virtual void  CountStart() = 0;
-	virtual float CountEnd() = 0;
+	virtual void  Reset() = 0;
+	virtual float GetElapsedSeconds() = 0;
 };
 
-extern "C" COMMONLIB_API void CreateTimeObject(ITimeObject** ppTimeObject);
-extern "C" COMMONLIB_API void DeleteTimeObject(ITimeObject* pTimeObject);
+extern "C" COMMONLIB_API void CreateTimer(ITimer** ppTimer);
+extern "C" COMMONLIB_API void DeleteTimer(ITimer* timer);
