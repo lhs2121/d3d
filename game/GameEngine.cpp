@@ -4,7 +4,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <mmsystem.h>
 #include <random>
+
+#pragma comment(lib, "winmm.lib")
 
 namespace
 {
@@ -14,22 +17,66 @@ namespace
 	constexpr int KeyS = 0x53;
 	constexpr int KeyJump = VK_SPACE;
 	constexpr int KeyDebugStats = VK_F1;
+	constexpr int KeyFrameLimit = VK_F2;
+	constexpr int KeyRevealMap = VK_F3;
+	constexpr int KeyMinimap = VK_TAB;
 	constexpr float BlockBreakDuration = 0.85f;
 	constexpr float InteractionRangeTiles = 6.0f;
 	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\block_atlas_extended.png";
 	constexpr int BlockAtlasColumns = 16;
 	constexpr int BlockAtlasRows = 1;
-	constexpr const WCHAR* SkyBackgroundTextures[] =
+	struct BackgroundImageLayer
 	{
-		L"assets\\back\\bg_grass_sky.png",
-		L"assets\\back\\bg_desert_sky.png",
-		L"assets\\back\\bg_ice_sky.png",
+		const WCHAR* textureFile = nullptr;
+		float alpha = 1.0f;
+		float parallaxX = 0.0f;
+		float parallaxY = 0.0f;
+		float depth = 5.0f;
 	};
-	constexpr const WCHAR* UndergroundBackgroundTextures[] =
+	constexpr int BackgroundBiomeCount = 3;
+	constexpr int SurfaceBackgroundLayerCount = 4;
+	constexpr int CaveBackgroundLayerCount = 4;
+	constexpr BackgroundImageLayer SurfaceBackgroundLayers[BackgroundBiomeCount][SurfaceBackgroundLayerCount] =
 	{
-		L"assets\\back\\bg_grass_cave.png",
-		L"assets\\back\\bg_desert_cave.png",
-		L"assets\\back\\bg_ice_cave.png",
+		{
+			{ L"assets\\back\\bg_grass_sky.png", 1.0f, 0.010f, 0.004f, 5.0f },
+			{ L"assets\\back\\bg_grass_far.png", 1.0f, 0.040f, 0.012f, 5.0f },
+			{ L"assets\\back\\bg_grass_mid.png", 1.0f, 0.085f, 0.024f, 5.0f },
+			{ L"assets\\back\\bg_grass_front.png", 1.0f, 0.155f, 0.040f, 5.0f },
+		},
+		{
+			{ L"assets\\back\\bg_desert_sky.png", 1.0f, 0.010f, 0.004f, 5.0f },
+			{ L"assets\\back\\bg_desert_far.png", 1.0f, 0.038f, 0.012f, 5.0f },
+			{ L"assets\\back\\bg_desert_mid.png", 1.0f, 0.082f, 0.024f, 5.0f },
+			{ L"assets\\back\\bg_desert_front.png", 1.0f, 0.160f, 0.042f, 5.0f },
+		},
+		{
+			{ L"assets\\back\\bg_ice_sky.png", 1.0f, 0.010f, 0.004f, 5.0f },
+			{ L"assets\\back\\bg_ice_far.png", 1.0f, 0.036f, 0.012f, 5.0f },
+			{ L"assets\\back\\bg_ice_mid.png", 1.0f, 0.078f, 0.023f, 5.0f },
+			{ L"assets\\back\\bg_ice_front.png", 1.0f, 0.150f, 0.040f, 5.0f },
+		},
+	};
+	constexpr BackgroundImageLayer CaveBackgroundLayers[BackgroundBiomeCount][CaveBackgroundLayerCount] =
+	{
+		{
+			{ L"assets\\back\\bg_grass_cave.png", 1.0f, 0.026f, 0.014f, 5.0f },
+			{ L"assets\\back\\bg_grass_cave_far.png", 1.0f, 0.064f, 0.030f, 5.0f },
+			{ L"assets\\back\\bg_grass_cave_mid.png", 1.0f, 0.118f, 0.052f, 5.0f },
+			{ L"assets\\back\\bg_grass_cave_front.png", 1.0f, 0.200f, 0.082f, 5.0f },
+		},
+		{
+			{ L"assets\\back\\bg_desert_cave.png", 1.0f, 0.026f, 0.014f, 5.0f },
+			{ L"assets\\back\\bg_desert_cave_far.png", 1.0f, 0.064f, 0.030f, 5.0f },
+			{ L"assets\\back\\bg_desert_cave_mid.png", 1.0f, 0.118f, 0.052f, 5.0f },
+			{ L"assets\\back\\bg_desert_cave_front.png", 1.0f, 0.200f, 0.082f, 5.0f },
+		},
+		{
+			{ L"assets\\back\\bg_ice_cave.png", 1.0f, 0.026f, 0.014f, 5.0f },
+			{ L"assets\\back\\bg_ice_cave_far.png", 1.0f, 0.064f, 0.030f, 5.0f },
+			{ L"assets\\back\\bg_ice_cave_mid.png", 1.0f, 0.118f, 0.052f, 5.0f },
+			{ L"assets\\back\\bg_ice_cave_front.png", 1.0f, 0.200f, 0.082f, 5.0f },
+		},
 	};
 	constexpr float MonsterCollisionWidth = 10.0f;
 	constexpr float MonsterCollisionHeight = 30.0f;
@@ -130,13 +177,22 @@ namespace
 		}
 	}
 
-	const WCHAR* WalkTextures[] =
+	constexpr const WCHAR* PlayerSpriteTexture = L"assets\\char\\player_chibi_sheet.png";
+	constexpr int PlayerSpriteColumns = 9;
+	constexpr int PlayerSpriteRows = 1;
+	constexpr int PlayerIdleFrameStart = 0;
+	constexpr int PlayerWalkFrameStart = 4;
+	constexpr int PlayerJumpFrame = 8;
+	constexpr const WCHAR* MonsterSpriteTextures[BackgroundBiomeCount] =
 	{
-		L"assets\\char\\walk1.0.png",
-		L"assets\\char\\walk1.1.png",
-		L"assets\\char\\walk1.2.png",
-		L"assets\\char\\walk1.3.png",
+		L"assets\\monster\\monster_grass_sheet.png",
+		L"assets\\monster\\monster_desert_sheet.png",
+		L"assets\\monster\\monster_ice_sheet.png",
 	};
+	constexpr int MonsterSpriteColumns = 4;
+	constexpr int MonsterSpriteRows = 1;
+	constexpr float MonsterSpriteDrawSize = 48.0f;
+	constexpr float MonsterSpriteYOffset = 4.0f;
 
 	struct CrackSegment
 	{
@@ -330,10 +386,13 @@ namespace
 
 void GameEngine::Start(const char* szTitle, float x, float y, float width, float height, HINSTANCE hInstance)
 {
+	m_timerResolutionRaised = timeBeginPeriod(1) == TIMERR_NOERROR;
+
 	CreateRenderer(&m_renderer);
 
 	CreateWindowInstance(&m_window);
 	m_window->Initialize(szTitle, x, y, width, height, hInstance, this);
+	m_targetRefreshRate = GetMonitorRefreshRate();
 
 	m_renderer->Initialize((UINT)m_window->GetWidth(), (UINT)m_window->GetHeight(), *m_window->GetHWND());
 
@@ -345,14 +404,19 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 	m_input->AddUser(this);
 
 	m_renderer->LoadTexture(BlockAtlasTexture);
-	for (const WCHAR* skyTexture : SkyBackgroundTextures)
-		m_renderer->LoadTexture(skyTexture);
-	for (const WCHAR* caveTexture : UndergroundBackgroundTextures)
-		m_renderer->LoadTexture(caveTexture);
-	m_renderer->LoadTexture(L"assets\\char\\stand.png");
-	for (const WCHAR* walkTexture : WalkTextures)
-		m_renderer->LoadTexture(walkTexture);
-	m_renderer->LoadTexture(L"assets\\char\\jump.0.png");
+	for (const auto& biomeLayers : SurfaceBackgroundLayers)
+	{
+		for (const BackgroundImageLayer& layer : biomeLayers)
+			m_renderer->LoadTexture(layer.textureFile);
+	}
+	for (const auto& biomeLayers : CaveBackgroundLayers)
+	{
+		for (const BackgroundImageLayer& layer : biomeLayers)
+			m_renderer->LoadTexture(layer.textureFile);
+	}
+	m_renderer->LoadTexture(PlayerSpriteTexture);
+	for (const WCHAR* monsterTexture : MonsterSpriteTextures)
+		m_renderer->LoadTexture(monsterTexture);
 
 	InitializeWorld();
 
@@ -376,8 +440,18 @@ void GameEngine::Update()
 
 	UpdateFrameStats(deltaTime);
 	m_input->Update();
+	m_uiConsumesLeftMouse = false;
 	if (m_input->IsDown(KeyDebugStats, this))
 		m_showRenderStats = !m_showRenderStats;
+	if (m_input->IsDown(KeyFrameLimit, this))
+		ToggleFrameLimiter();
+	if (m_input->IsDown(KeyMinimap, this))
+	{
+		m_minimapExpanded = !m_minimapExpanded;
+		m_minimapDirty = true;
+	}
+	if (m_input->IsDown(KeyRevealMap, this))
+		RevealAllMap();
 
 	QueryPerformanceCounter(&sectionEnd);
 	cpuStats.inputMs = CounterMilliseconds(sectionStart, sectionEnd);
@@ -388,6 +462,7 @@ void GameEngine::Update()
 	TryPlaceSelectedBlock();
 	UpdateBlockBreaking(deltaTime);
 	UpdatePlayer(deltaTime);
+	UpdateMapReveal();
 	UpdatePlayerCombat(deltaTime);
 
 	QueryPerformanceCounter(&sectionEnd);
@@ -419,6 +494,7 @@ void GameEngine::Update()
 	cpuStats.renderMs = CounterMilliseconds(sectionStart, sectionEnd);
 	cpuStats.totalMs = CounterMilliseconds(frameStart, sectionEnd);
 	AccumulateCpuStats(cpuStats);
+	ApplyFrameLimiter(frameStart);
 }
 
 void GameEngine::InitializeWorld()
@@ -427,12 +503,16 @@ void GameEngine::InitializeWorld()
 	m_blockBreaks.assign(m_blockWidth * m_blockHeight, BlockBreakState{});
 	m_surfaceHeights.clear();
 	m_biomes.clear();
+	m_revealedTiles.assign(static_cast<size_t>(m_blockWidth * m_blockHeight), 0);
 	m_monsters.clear();
 	m_droppedItems.clear();
 	m_monsterQueryScratch.clear();
 	m_monsterOverlapScratch.clear();
 	m_minimapRuns.clear();
 	m_minimapDirty = true;
+	m_debugRevealMap = false;
+	m_minimapExpanded = false;
+	m_cachedMinimapSampleStep = -1;
 	m_worldOriginX = -((m_blockWidth - 1) * m_tileSize) * 0.5f;
 
 	const unsigned int seed = GetTickCount();
@@ -623,9 +703,9 @@ void GameEngine::InitializeWorld()
 			const float caveNoise = FractalNoise2D(x * 0.067f, y * 0.083f, seed + 701u, 4, 2.0f, 0.54f);
 			const float broadCavern = FractalNoise2D(x * 0.024f + 73.0f, y * 0.031f, seed + 705u, 3, 2.0f, 0.50f);
 			const float wormNoise = std::fabs(FractalNoise2D(x * 0.030f + 19.0f, y * 0.030f, seed + 709u, 3, 2.0f, 0.50f) - 0.5f);
-			const float threshold = 0.84f - depthRatio * 0.055f;
-			if ((caveNoise > threshold && broadCavern > 0.68f && depthRatio > 0.30f) ||
-				(wormNoise < 0.020f && depthRatio > 0.36f))
+			const float threshold = 0.90f - depthRatio * 0.035f;
+			if ((caveNoise > threshold && broadCavern > 0.74f && depthRatio > 0.40f) ||
+				(wormNoise < 0.012f && depthRatio > 0.46f))
 				caveMask[y * m_blockWidth + x] = 1;
 		}
 	}
@@ -662,18 +742,18 @@ void GameEngine::InitializeWorld()
 		caveMask.swap(nextMask);
 	}
 
-	const int tunnelCount = 8 + m_blockWidth / 40;
+	const int tunnelCount = 2 + m_blockWidth / 240;
 	for (int tunnel = 0; tunnel < tunnelCount; ++tunnel)
 	{
 		float caveX = static_cast<float>(randomInt(8, m_blockWidth - 9));
 		float caveY = static_cast<float>(surfaceHeights[static_cast<int>(caveX)] + randomInt(14, m_blockHeight - surfaceHeights[static_cast<int>(caveX)] - 7));
 		float angle = randomFloat(-1.8f, 1.8f);
-		const int steps = randomInt(28, 76);
+		const int steps = randomInt(12, 32);
 
 		for (int step = 0; step < steps; ++step)
 		{
 			const float depthRatio = caveY / static_cast<float>(m_blockHeight);
-			markCaveCircle(caveX, caveY, randomFloat(0.75f, 1.35f + depthRatio * 0.95f), randomFloat(0.55f, 1.05f + depthRatio * 0.60f));
+			markCaveCircle(caveX, caveY, randomFloat(0.60f, 1.05f + depthRatio * 0.55f), randomFloat(0.45f, 0.85f + depthRatio * 0.38f));
 			angle += randomFloat(-0.26f, 0.26f);
 			caveX += std::cos(angle) * randomFloat(0.65f, 1.45f);
 			caveY += std::sin(angle) * randomFloat(0.35f, 1.00f) + randomFloat(-0.22f, 0.30f);
@@ -682,7 +762,7 @@ void GameEngine::InitializeWorld()
 		}
 	}
 
-	const int chamberCount = 6 + m_blockWidth / 48;
+	const int chamberCount = 2 + m_blockWidth / 240;
 	std::vector<CaveNode> chamberNodes;
 	chamberNodes.reserve(chamberCount);
 	for (int chamber = 0; chamber < chamberCount; ++chamber)
@@ -694,8 +774,8 @@ void GameEngine::InitializeWorld()
 
 		const int centerY = randomInt(minY, m_blockHeight - 9);
 		const float depthRatio = static_cast<float>(centerY) / static_cast<float>(m_blockHeight);
-		const float radiusX = randomFloat(2.4f, 4.0f + depthRatio * 2.2f);
-		const float radiusY = randomFloat(1.25f, 2.30f + depthRatio * 1.35f);
+		const float radiusX = randomFloat(1.9f, 3.2f + depthRatio * 1.2f);
+		const float radiusY = randomFloat(1.00f, 1.85f + depthRatio * 0.75f);
 		markCaveCircle(static_cast<float>(centerX), static_cast<float>(centerY), radiusX, radiusY);
 		chamberNodes.push_back({ static_cast<float>(centerX), static_cast<float>(centerY), (radiusX + radiusY) * 0.5f });
 	}
@@ -707,7 +787,7 @@ void GameEngine::InitializeWorld()
 
 	for (size_t i = 1; i < chamberNodes.size(); ++i)
 	{
-		if (randomInt(0, 99) > 62)
+		if (randomInt(0, 99) > 38)
 			continue;
 
 		const CaveNode& previous = chamberNodes[i - 1];
@@ -719,7 +799,7 @@ void GameEngine::InitializeWorld()
 		carveCaveTunnel(previous.x, previous.y, current.x, current.y, connectorRadius);
 	}
 
-	const int extraConnectorCount = (std::min)(4, static_cast<int>(chamberNodes.size()));
+	const int extraConnectorCount = (std::min)(2, static_cast<int>(chamberNodes.size()));
 	for (int connector = 0; connector < extraConnectorCount && chamberNodes.size() > 2; ++connector)
 	{
 		const int fromIndex = randomInt(0, static_cast<int>(chamberNodes.size()) - 2);
@@ -849,7 +929,7 @@ void GameEngine::InitializeWorld()
 		const int steps = (std::max)(8, static_cast<int>(std::ceil(length * 1.15f)));
 		const float wavePhase = randomFloat(0.0f, 6.2831853f);
 		const float waveFrequency = randomFloat(0.85f, 1.70f);
-		const float waveAmplitude = randomFloat(0.55f, allowSurfaceOpening ? 1.50f : 2.40f);
+		const float waveAmplitude = randomFloat(0.45f, allowSurfaceOpening ? 1.10f : 1.75f);
 
 		for (int step = 0; step <= steps; ++step)
 		{
@@ -866,87 +946,396 @@ void GameEngine::InitializeWorld()
 
 			const float depthRatio = static_cast<float>(caveY - surfaceHeights[tileX]) /
 				static_cast<float>((std::max)(1, m_blockHeight - surfaceHeights[tileX]));
-			const float radiusX = baseRadius + depthRatio * 1.15f + randomFloat(-0.16f, 0.22f);
-			const float radiusY = baseRadius * 0.76f + depthRatio * 0.72f + randomFloat(-0.12f, 0.18f);
-			carveSolidCircle(caveX, caveY, (std::max)(1.05f, radiusX), (std::max)(0.82f, radiusY), allowSurfaceOpening);
+			const float radiusX = baseRadius + depthRatio * 0.48f + randomFloat(-0.12f, 0.16f);
+			const float radiusY = baseRadius * 0.84f + depthRatio * 0.30f + randomFloat(-0.08f, 0.12f);
+			carveSolidCircle(caveX, caveY, (std::max)(0.95f, radiusX), (std::max)(1.08f, radiusY), allowSurfaceOpening);
 		}
 	};
 
-	std::vector<CaveNode> mainCaveNodes;
-	const int mainCaveNodeCount = (std::max)(6, m_blockWidth / 34);
-	mainCaveNodes.reserve(mainCaveNodeCount + 8);
-	for (int node = 0; node < mainCaveNodeCount; ++node)
+	struct CaveBranchJob
 	{
-		const int segmentStart = 8 + node * (m_blockWidth - 16) / mainCaveNodeCount;
-		const int segmentEnd = 8 + (node + 1) * (m_blockWidth - 16) / mainCaveNodeCount - 1;
-		const int caveX = std::clamp(randomInt(segmentStart, (std::max)(segmentStart, segmentEnd)), 4, m_blockWidth - 5);
-		const int minY = (std::min)(surfaceHeights[caveX] + 22, m_blockHeight - 14);
-		const int maxY = (std::min)(surfaceHeights[caveX] + 50, m_blockHeight - 9);
-		if (minY >= maxY)
+		CaveNode from;
+		float angle;
+		int depth;
+		int branchIndex;
+		bool forceLobby;
+	};
+
+	auto clampCavePoint = [this, &surfaceHeights](float& caveX, float& caveY, int minDepth)
+	{
+		caveX = std::clamp(caveX, 6.0f, static_cast<float>(m_blockWidth - 7));
+		const int tileX = std::clamp(static_cast<int>(std::round(caveX)), 2, m_blockWidth - 3);
+		const float minimumY = static_cast<float>((std::min)(surfaceHeights[tileX] + minDepth, m_blockHeight - 8));
+		caveY = std::clamp(caveY, minimumY, static_cast<float>(m_blockHeight - 8));
+	};
+
+	auto carveLobedChamber = [&randomInt, &randomFloat, &carveSolidCircle](float centerX, float centerY,
+		float radiusX, float radiusY, bool allowSurfaceOpening)
+	{
+		carveSolidCircle(centerX, centerY, radiusX, radiusY, allowSurfaceOpening);
+		const int lobeCount = randomInt(0, 1);
+		for (int lobe = 0; lobe < lobeCount; ++lobe)
+		{
+			const float angle = randomFloat(-3.1415926f, 3.1415926f);
+			const float offsetX = std::cos(angle) * radiusX * randomFloat(0.22f, 0.42f);
+			const float offsetY = std::sin(angle) * radiusY * randomFloat(0.14f, 0.30f);
+			carveSolidCircle(centerX + offsetX, centerY + offsetY,
+				radiusX * randomFloat(0.36f, 0.56f),
+				radiusY * randomFloat(0.38f, 0.62f),
+				allowSurfaceOpening);
+		}
+
+		return CaveNode{ centerX, centerY, (radiusX + radiusY) * 0.5f };
+	};
+
+	auto carveNaturalPath = [&randomFloat, &carveSolidTunnel](const CaveNode& from, float endX, float endY,
+		float radius, bool allowSurfaceOpening)
+	{
+		const float midX = Lerp(from.x, endX, randomFloat(0.38f, 0.62f));
+		const float midY = Lerp(from.y, endY, randomFloat(0.38f, 0.62f));
+		const float dx = endX - from.x;
+		const float dy = endY - from.y;
+		const float length = std::sqrt(dx * dx + dy * dy);
+		const float normalX = length > 0.01f ? -dy / length : 0.0f;
+		const float normalY = length > 0.01f ? dx / length : 0.0f;
+		const float bend = randomFloat(-7.5f, 7.5f);
+		const float jointX = midX + normalX * bend;
+		const float jointY = midY + normalY * bend * 0.55f;
+
+		carveSolidTunnel(from.x, from.y, jointX, jointY, radius * randomFloat(0.88f, 1.08f), allowSurfaceOpening);
+		carveSolidTunnel(jointX, jointY, endX, endY, radius * randomFloat(0.82f, 1.04f), allowSurfaceOpening);
+	};
+
+	std::vector<CaveNode> caveGraphNodes;
+	std::vector<CaveBranchJob> branchJobs;
+	std::vector<CaveNode> mainRouteNodes;
+	caveGraphNodes.reserve(200);
+	branchJobs.reserve(160);
+	mainRouteNodes.reserve(16);
+
+	struct EntrancePlan
+	{
+		int minX;
+		int maxX;
+		int entranceCount;
+		int primaryBranchCount;
+	};
+
+	const EntrancePlan entrancePlans[] =
+	{
+		{
+			spawnX + spawnSafeRadius + 34,
+			grasslandEnd - 20,
+			2,
+			4
+		},
+		{
+			grasslandEnd + 22,
+			desertEnd - 22,
+			2,
+			4
+		},
+		{
+			desertEnd + 22,
+			m_blockWidth - 18,
+			2,
+			4
+		},
+	};
+
+	for (int entranceIndex = 0; entranceIndex < 3; ++entranceIndex)
+	{
+		const EntrancePlan& plan = entrancePlans[entranceIndex];
+		if (plan.minX > plan.maxX)
 			continue;
 
-		const int caveY = randomInt(minY, maxY);
-		const float depthRatio = static_cast<float>(caveY) / static_cast<float>(m_blockHeight);
-		const float radiusX = randomFloat(4.2f, 6.4f + depthRatio * 2.2f);
-		const float radiusY = randomFloat(2.1f, 3.3f + depthRatio * 1.3f);
-		carveSolidCircle(static_cast<float>(caveX), static_cast<float>(caveY), radiusX, radiusY, false);
-		mainCaveNodes.push_back({ static_cast<float>(caveX), static_cast<float>(caveY), (radiusX + radiusY) * 0.5f });
+		const int usableWidth = plan.maxX - plan.minX + 1;
+		const int entranceCount = std::clamp(plan.entranceCount, 1, (std::max)(1, usableWidth / 34));
+		for (int entranceSlot = 0; entranceSlot < entranceCount; ++entranceSlot)
+		{
+			const float slotT = static_cast<float>(entranceSlot + 1) / static_cast<float>(entranceCount + 1);
+			int entranceX = static_cast<int>(std::round(Lerp(static_cast<float>(plan.minX), static_cast<float>(plan.maxX), slotT)));
+			entranceX = std::clamp(entranceX + randomInt(-9, 9), plan.minX, plan.maxX);
+			if (std::abs(entranceX - spawnX) < spawnSafeRadius + 22)
+				entranceX = std::clamp(spawnX + spawnSafeRadius + 34, plan.minX, plan.maxX);
+
+			const int entranceSurfaceY = surfaceHeights[entranceX];
+			const int mouthHalfWidth = randomInt(1, 2);
+			for (int dx = -mouthHalfWidth; dx <= mouthHalfWidth; ++dx)
+			{
+				const int tileX = entranceX + dx;
+				if (tileX < 1 || tileX >= m_blockWidth - 1)
+					continue;
+
+				const int openDepth = mouthHalfWidth + 4 - std::abs(dx);
+				for (int y = (std::max)(0, surfaceHeights[tileX] - 1);
+					y <= surfaceHeights[tileX] + openDepth && y < m_blockHeight - 1; ++y)
+				{
+					m_blocks[y * m_blockWidth + tileX].visible = 0;
+				}
+			}
+
+			carveSolidCircle(static_cast<float>(entranceX), static_cast<float>(entranceSurfaceY + 3),
+				static_cast<float>(mouthHalfWidth) + 0.65f, randomFloat(2.0f, 2.8f), true);
+
+			float lobbyX = static_cast<float>(entranceX + randomInt(-5, 5));
+			float lobbyY = static_cast<float>(entranceSurfaceY + randomInt(14, 21));
+			clampCavePoint(lobbyX, lobbyY, 13);
+			CaveNode rootLobby = carveLobedChamber(lobbyX, lobbyY, randomFloat(2.0f, 3.1f), randomFloat(0.95f, 1.55f), false);
+			CaveNode entranceNode{ static_cast<float>(entranceX), static_cast<float>(entranceSurfaceY + 3), 1.5f };
+			carveNaturalPath(entranceNode, rootLobby.x, rootLobby.y, randomFloat(0.92f, 1.25f), true);
+
+			float routeX = rootLobby.x + randomFloat(-7.0f, 7.0f);
+			float routeY = rootLobby.y + randomFloat(12.0f, 20.0f);
+			clampCavePoint(routeX, routeY, 24);
+			CaveNode routeHub = carveLobedChamber(routeX, routeY, randomFloat(1.25f, 2.05f), randomFloat(0.70f, 1.25f), false);
+			carveNaturalPath(rootLobby, routeHub.x, routeHub.y, randomFloat(0.64f, 0.92f), false);
+
+			caveGraphNodes.push_back(rootLobby);
+			caveGraphNodes.push_back(routeHub);
+			mainRouteNodes.push_back(routeHub);
+			const int branchCount = entranceSlot == 0 ? plan.primaryBranchCount : 3;
+			for (int branch = 0; branch < branchCount; ++branch)
+			{
+				const float branchT = branchCount <= 1 ? 0.5f : static_cast<float>(branch) / static_cast<float>(branchCount - 1);
+				const float angle = Lerp(0.46f, 2.70f, branchT) + randomFloat(-0.18f, 0.18f);
+				branchJobs.push_back({
+					rootLobby,
+					angle,
+					0,
+					branch,
+					entranceSlot == 0 && branch == 0
+				});
+			}
+
+			const int routeBranchCount = entranceSlot == 0 ? 2 : 1;
+			for (int branch = 0; branch < routeBranchCount; ++branch)
+			{
+				const float sideSign = branch == 0 ? -1.0f : 1.0f;
+				float angle = randomFloat(0.72f, 2.42f) + sideSign * randomFloat(0.20f, 0.52f);
+				angle = std::clamp(angle, 0.22f, 2.92f);
+				branchJobs.push_back({ routeHub, angle, 1, branch, false });
+			}
+		}
 	}
 
-	std::sort(mainCaveNodes.begin(), mainCaveNodes.end(), [](const CaveNode& lhs, const CaveNode& rhs)
+	std::sort(mainRouteNodes.begin(), mainRouteNodes.end(), [](const CaveNode& lhs, const CaveNode& rhs)
 	{
 		return lhs.x < rhs.x;
 	});
 
-	for (size_t i = 1; i < mainCaveNodes.size(); ++i)
+	for (size_t routeIndex = 1; routeIndex < mainRouteNodes.size(); ++routeIndex)
 	{
-		const CaveNode& previous = mainCaveNodes[i - 1];
-		const CaveNode& current = mainCaveNodes[i];
-		const float radius = std::clamp((previous.radius + current.radius) * 0.34f, 1.85f, 3.05f);
-		carveSolidTunnel(previous.x, previous.y, current.x, current.y, radius, false);
-	}
+		const CaveNode& previous = mainRouteNodes[routeIndex - 1];
+		const CaveNode& next = mainRouteNodes[routeIndex];
+		const float dx = next.x - previous.x;
+		const float dy = next.y - previous.y;
+		const float distance = std::sqrt(dx * dx + dy * dy);
+		const int relayCount = std::clamp(static_cast<int>(std::ceil(distance / 62.0f)), 1, 4);
+		CaveNode cursor = previous;
 
-	const int branchCount = 5 + m_blockWidth / 80;
-	for (int branch = 0; branch < branchCount && !mainCaveNodes.empty(); ++branch)
-	{
-		const CaveNode& anchor = mainCaveNodes[randomInt(0, static_cast<int>(mainCaveNodes.size()) - 1)];
-		const int branchX = std::clamp(static_cast<int>(std::round(anchor.x)) + randomInt(-20, 20), 5, m_blockWidth - 6);
-		const int branchY = std::clamp(static_cast<int>(std::round(anchor.y)) + randomInt(-14, 18),
-			(std::min)(surfaceHeights[branchX] + 16, m_blockHeight - 9),
-			m_blockHeight - 8);
-		const float radiusX = randomFloat(3.2f, 5.4f);
-		const float radiusY = randomFloat(1.7f, 2.9f);
-		carveSolidCircle(static_cast<float>(branchX), static_cast<float>(branchY), radiusX, radiusY, false);
-		carveSolidTunnel(anchor.x, anchor.y, static_cast<float>(branchX), static_cast<float>(branchY), randomFloat(1.25f, 1.95f), false);
-	}
-
-	const int entranceTargetCount = 3;
-	int carvedEntrances = 0;
-	for (int attempt = 0; attempt < 24 && carvedEntrances < entranceTargetCount && !mainCaveNodes.empty(); ++attempt)
-	{
-		const CaveNode& target = mainCaveNodes[randomInt(0, static_cast<int>(mainCaveNodes.size()) - 1)];
-		int entranceX = std::clamp(static_cast<int>(std::round(target.x)) + randomInt(-12, 12), 5, m_blockWidth - 6);
-		if (std::abs(entranceX - spawnX) < spawnSafeRadius + 16)
-			continue;
-
-		const int surfaceY = surfaceHeights[entranceX];
-		if (surfaceY < 4 || surfaceY > m_blockHeight - 22)
-			continue;
-
-		for (int dx = -2; dx <= 2; ++dx)
+		for (int relay = 1; relay <= relayCount; ++relay)
 		{
-			const int tileX = entranceX + dx;
-			if (tileX < 1 || tileX >= m_blockWidth - 1)
-				continue;
+			const float t = static_cast<float>(relay) / static_cast<float>(relayCount + 1);
+			float relayX = Lerp(previous.x, next.x, t) + randomFloat(-9.0f, 9.0f);
+			float relayY = Lerp(previous.y, next.y, t) + randomFloat(-8.0f, 11.0f);
+			clampCavePoint(relayX, relayY, 26);
 
-			const int openDepth = 4 - (std::abs(dx) / 2);
-			for (int y = surfaceHeights[tileX]; y <= surfaceHeights[tileX] + openDepth && y < m_blockHeight - 1; ++y)
-				m_blocks[y * m_blockWidth + tileX].visible = 0;
+			const float connectorRadius = randomFloat(0.70f, 0.98f);
+			carveNaturalPath(cursor, relayX, relayY, connectorRadius, false);
+			CaveNode relayNode = carveLobedChamber(relayX, relayY, randomFloat(1.15f, 2.35f), randomFloat(0.72f, 1.45f), false);
+			caveGraphNodes.push_back(relayNode);
+
+			if (branchJobs.size() < 160 && randomInt(0, 99) < 76)
+			{
+				const float sideSign = randomInt(0, 1) == 0 ? -1.0f : 1.0f;
+				const float baseAngle = std::atan2(next.y - previous.y, next.x - previous.x);
+				float branchAngle = baseAngle + sideSign * randomFloat(0.62f, 1.28f) + randomFloat(-0.18f, 0.18f);
+				branchAngle = std::clamp(branchAngle, 0.18f, 2.96f);
+				branchJobs.push_back({ relayNode, branchAngle, 1, relay, false });
+			}
+
+			cursor = relayNode;
 		}
 
-		carveSolidCircle(static_cast<float>(entranceX), static_cast<float>(surfaceY + 2), 2.3f, 2.4f, true);
-		carveSolidTunnel(static_cast<float>(entranceX), static_cast<float>(surfaceY + 2), target.x, target.y, randomFloat(1.35f, 1.90f), true);
-		++carvedEntrances;
+		carveNaturalPath(cursor, next.x, next.y, randomFloat(0.70f, 1.02f), false);
+	}
+
+	std::vector<CaveNode> ambientCaveNodes;
+	const int ambientNodeCount = (std::max)(8, m_blockWidth / 56);
+	ambientCaveNodes.reserve(ambientNodeCount);
+	for (int ambient = 0; ambient < ambientNodeCount; ++ambient)
+	{
+		const float t = static_cast<float>(ambient + 1) / static_cast<float>(ambientNodeCount + 1);
+		float ambientX = Lerp(18.0f, static_cast<float>(m_blockWidth - 19), t) + randomFloat(-14.0f, 14.0f);
+		ambientX = std::clamp(ambientX, 8.0f, static_cast<float>(m_blockWidth - 9));
+
+		const int tileX = std::clamp(static_cast<int>(std::round(ambientX)), 2, m_blockWidth - 3);
+		const int minY = (std::min)(surfaceHeights[tileX] + randomInt(24, 38), m_blockHeight - 10);
+		const int maxY = (std::min)(surfaceHeights[tileX] + randomInt(56, 86), m_blockHeight - 8);
+		if (minY >= maxY)
+			continue;
+
+		float ambientY = static_cast<float>(randomInt(minY, maxY));
+		clampCavePoint(ambientX, ambientY, 22);
+		CaveNode ambientNode = carveLobedChamber(ambientX, ambientY,
+			randomFloat(1.35f, 2.65f), randomFloat(0.78f, 1.55f), false);
+		ambientCaveNodes.push_back(ambientNode);
+		caveGraphNodes.push_back(ambientNode);
+
+		const int branchCount = randomInt(1, 2);
+		for (int branch = 0; branch < branchCount && branchJobs.size() < 160; ++branch)
+		{
+			const float branchT = branchCount <= 1 ? 0.5f : static_cast<float>(branch) / static_cast<float>(branchCount - 1);
+			const float angle = Lerp(0.44f, 2.70f, branchT) + randomFloat(-0.38f, 0.38f);
+			branchJobs.push_back({ ambientNode, std::clamp(angle, 0.18f, 2.98f), 1, branch, false });
+		}
+	}
+
+	std::sort(ambientCaveNodes.begin(), ambientCaveNodes.end(), [](const CaveNode& lhs, const CaveNode& rhs)
+	{
+		return lhs.x < rhs.x;
+	});
+
+	for (size_t i = 1; i < ambientCaveNodes.size(); ++i)
+	{
+		const CaveNode& previous = ambientCaveNodes[i - 1];
+		const CaveNode& current = ambientCaveNodes[i];
+		if (current.x - previous.x > 92.0f || std::fabs(current.y - previous.y) > 48.0f)
+			continue;
+
+		carveNaturalPath(previous, current.x, current.y, randomFloat(0.52f, 0.78f), false);
+	}
+
+	for (const CaveNode& ambientNode : ambientCaveNodes)
+	{
+		if (mainRouteNodes.empty())
+			break;
+
+		const CaveNode* nearestRoute = nullptr;
+		float nearestDistanceSq = 999999.0f;
+		for (const CaveNode& routeNode : mainRouteNodes)
+		{
+			const float dx = routeNode.x - ambientNode.x;
+			const float dy = routeNode.y - ambientNode.y;
+			const float distanceSq = dx * dx + dy * dy;
+			if (distanceSq < nearestDistanceSq)
+			{
+				nearestDistanceSq = distanceSq;
+				nearestRoute = &routeNode;
+			}
+		}
+
+		if (nearestRoute == nullptr || nearestDistanceSq > 132.0f * 132.0f)
+			continue;
+		if (randomInt(0, 99) > 58 && nearestDistanceSq > 72.0f * 72.0f)
+			continue;
+
+		carveNaturalPath(ambientNode, nearestRoute->x, nearestRoute->y, randomFloat(0.50f, 0.74f), false);
+	}
+
+	for (size_t jobIndex = 0; jobIndex < branchJobs.size() && jobIndex < 132; ++jobIndex)
+	{
+		const CaveBranchJob job = branchJobs[jobIndex];
+		const float length = job.depth == 0 ? randomFloat(24.0f, 42.0f) :
+			(job.depth == 1 ? randomFloat(17.0f, 31.0f) :
+				(job.depth == 2 ? randomFloat(11.0f, 22.0f) : randomFloat(7.0f, 15.0f)));
+		float endX = job.from.x + std::cos(job.angle) * length + randomFloat(-6.0f, 6.0f);
+		float endY = job.from.y + std::sin(job.angle) * length + randomFloat(-3.0f, 8.0f);
+		const int minDepth = 16 + job.depth * 4;
+		clampCavePoint(endX, endY, minDepth);
+
+		const float tunnelRadius = job.depth == 0 ? randomFloat(1.02f, 1.42f) :
+			(job.depth == 1 ? randomFloat(0.88f, 1.18f) :
+				(job.depth == 2 ? randomFloat(0.72f, 1.00f) : randomFloat(0.62f, 0.88f)));
+		carveNaturalPath(job.from, endX, endY, tunnelRadius, false);
+
+		const int pocketCount = job.depth <= 1 ? randomInt(1, 2) : (randomInt(0, 99) < 42 ? 1 : 0);
+		for (int pocket = 0; pocket < pocketCount; ++pocket)
+		{
+			const float pocketT = randomFloat(0.26f, 0.86f);
+			float pocketX = Lerp(job.from.x, endX, pocketT);
+			float pocketY = Lerp(job.from.y, endY, pocketT);
+			const float sideSign = randomInt(0, 1) == 0 ? -1.0f : 1.0f;
+			const float offset = randomFloat(1.8f, 4.2f);
+			pocketX += std::cos(job.angle + sideSign * 1.5707963f) * offset;
+			pocketY += std::sin(job.angle + sideSign * 1.5707963f) * offset * 0.62f;
+			clampCavePoint(pocketX, pocketY, minDepth);
+			carveLobedChamber(pocketX, pocketY, randomFloat(1.0f, 2.1f), randomFloat(0.70f, 1.45f), false);
+		}
+
+		if (job.depth < 3 && branchJobs.size() < 160)
+		{
+			int twigCount = 0;
+			if (job.depth == 0)
+				twigCount = randomInt(1, 2);
+			else if (job.depth == 1)
+				twigCount = randomInt(0, 99) < 72 ? 1 : 0;
+			else
+				twigCount = randomInt(0, 99) < 34 ? 1 : 0;
+
+			for (int twig = 0; twig < twigCount && branchJobs.size() < 160; ++twig)
+			{
+				const float twigT = randomFloat(0.34f, 0.80f);
+				float twigX = Lerp(job.from.x, endX, twigT) + randomFloat(-2.2f, 2.2f);
+				float twigY = Lerp(job.from.y, endY, twigT) + randomFloat(-1.5f, 2.2f);
+				clampCavePoint(twigX, twigY, (std::max)(14, minDepth - 3));
+
+				const float sideSign = randomInt(0, 1) == 0 ? -1.0f : 1.0f;
+				float twigAngle = job.angle + sideSign * randomFloat(0.64f, 1.28f) + randomFloat(-0.18f, 0.18f);
+				twigAngle = std::clamp(twigAngle, 0.18f, 2.96f);
+				branchJobs.push_back({ CaveNode{ twigX, twigY, 1.0f }, twigAngle, job.depth + 1, twig, false });
+			}
+		}
+
+		const bool forceLobby = job.depth == 0 && job.forceLobby;
+		const bool makeLobby = job.depth < 3 && (forceLobby || randomInt(0, 99) < (job.depth == 0 ? 42 : (job.depth == 1 ? 30 : 13)));
+		if (makeLobby)
+		{
+			const float depthRatio = endY / static_cast<float>(m_blockHeight);
+			const float roomRadiusX = job.depth == 0 ? randomFloat(2.05f, 3.20f + depthRatio * 0.35f) :
+				(job.depth == 1 ? randomFloat(1.65f, 2.65f + depthRatio * 0.28f) :
+					randomFloat(1.20f, 2.05f + depthRatio * 0.20f));
+			const float roomRadiusY = job.depth == 0 ? randomFloat(1.02f, 1.72f + depthRatio * 0.24f) :
+				(job.depth == 1 ? randomFloat(0.86f, 1.48f + depthRatio * 0.18f) :
+					randomFloat(0.66f, 1.18f + depthRatio * 0.14f));
+			CaveNode lobby = carveLobedChamber(endX, endY, roomRadiusX, roomRadiusY, false);
+			caveGraphNodes.push_back(lobby);
+
+			const int childCount = job.depth == 0 ? (job.forceLobby ? randomInt(2, 4) : randomInt(1, 3)) :
+				(job.depth == 1 ? randomInt(1, 2) : randomInt(0, 1));
+			for (int child = 0; child < childCount && branchJobs.size() < 160; ++child)
+			{
+				const float childT = childCount <= 1 ? 0.5f : static_cast<float>(child) / static_cast<float>(childCount - 1);
+				const float spread = Lerp(-1.08f, 1.08f, childT);
+				float childAngle = job.angle + spread + randomFloat(-0.26f, 0.26f);
+				childAngle = std::clamp(childAngle, 0.16f, 2.98f);
+				branchJobs.push_back({ lobby, childAngle, job.depth + 1, child, false });
+			}
+		}
+		else
+		{
+			const float endRadiusX = randomFloat(1.3f, 2.4f);
+			const float endRadiusY = randomFloat(0.9f, 1.6f);
+			CaveNode deadEnd = carveLobedChamber(endX, endY, endRadiusX, endRadiusY, false);
+			caveGraphNodes.push_back(deadEnd);
+		}
+	}
+
+	const int loopConnectorCount = (std::min)(8, static_cast<int>(caveGraphNodes.size()) / 7);
+	for (int connector = 0; connector < loopConnectorCount && caveGraphNodes.size() > 4; ++connector)
+	{
+		const int fromIndex = randomInt(0, static_cast<int>(caveGraphNodes.size()) - 3);
+		const int toIndex = std::clamp(fromIndex + randomInt(2, 9), 0, static_cast<int>(caveGraphNodes.size()) - 1);
+		const CaveNode& from = caveGraphNodes[fromIndex];
+		const CaveNode& to = caveGraphNodes[toIndex];
+		const float dx = to.x - from.x;
+		const float dy = to.y - from.y;
+		const float distance = std::sqrt(dx * dx + dy * dy);
+		if (distance < 22.0f || distance > 80.0f || std::fabs(dy) > 38.0f)
+			continue;
+
+		carveNaturalPath(from, to.x, to.y, randomFloat(0.58f, 0.84f), false);
 	}
 
 	auto removeDetachedTerrain = [this, &surfaceHeights]()
@@ -1032,8 +1421,12 @@ void GameEngine::InitializeWorld()
 				enqueueDetached(tileX, tileY + 1);
 			}
 
-			for (int detachedIndex : component)
-				m_blocks[detachedIndex].visible = 0;
+			constexpr size_t MaxDetachedDebrisTiles = 28;
+			if (component.size() <= MaxDetachedDebrisTiles)
+			{
+				for (int detachedIndex : component)
+					m_blocks[detachedIndex].visible = 0;
+			}
 		}
 	};
 
@@ -1309,6 +1702,8 @@ void GameEngine::InitializeWorld()
 		monster.facing = tileX < spawnX ? 1 : -1;
 		monster.health = underground ? 48 : 40;
 		monster.maxHealth = monster.health;
+		monster.biome = m_biomes.empty() ? static_cast<unsigned char>(BiomeGrassland) :
+			static_cast<unsigned char>(std::clamp(static_cast<int>(m_biomes[tileX]), 0, BackgroundBiomeCount - 1));
 		monster.alive = true;
 		monster.onGround = true;
 		monster.underground = underground;
@@ -1384,6 +1779,7 @@ void GameEngine::InitializeWorld()
 	m_player.onGround = true;
 	m_cameraX = m_player.x;
 	m_cameraY = m_player.y;
+	UpdateMapReveal();
 }
 
 void GameEngine::UpdateFrameStats(float deltaTime)
@@ -1427,6 +1823,136 @@ void GameEngine::AccumulateCpuStats(const CpuFrameStats& stats)
 	m_cpuStatsCount = 0;
 }
 
+void GameEngine::ToggleFrameLimiter()
+{
+	m_targetRefreshRate = GetMonitorRefreshRate();
+	m_frameLimitEnabled = !m_frameLimitEnabled;
+
+	char text[48] = {};
+	if (m_frameLimitEnabled)
+		std::snprintf(text, sizeof(text), "FPS LIMIT %dHZ", m_targetRefreshRate);
+	else
+		std::snprintf(text, sizeof(text), "FPS LIMIT OFF");
+
+	SetStatusText(text, 1.6f);
+}
+
+void GameEngine::ApplyFrameLimiter(const LARGE_INTEGER& frameStart)
+{
+	if (!m_frameLimitEnabled)
+		return;
+
+	const int refreshRate = (std::max)(30, m_targetRefreshRate);
+	const double targetFrameMs = 1000.0 / static_cast<double>(refreshRate);
+
+	while (true)
+	{
+		LARGE_INTEGER now = {};
+		QueryPerformanceCounter(&now);
+		const double elapsedMs = static_cast<double>(CounterMilliseconds(frameStart, now));
+		const double remainingMs = targetFrameMs - elapsedMs;
+		if (remainingMs <= 0.0)
+			break;
+
+		if (remainingMs > 1.5)
+			Sleep(static_cast<DWORD>((std::max)(1.0, remainingMs - 0.75)));
+		else if (remainingMs > 0.25)
+			SwitchToThread();
+		else
+			YieldProcessor();
+	}
+}
+
+int GameEngine::GetMonitorRefreshRate() const
+{
+	HWND hwnd = nullptr;
+	if (m_window != nullptr)
+	{
+		HWND* windowHandle = m_window->GetHWND();
+		if (windowHandle != nullptr)
+			hwnd = *windowHandle;
+	}
+
+	HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+	if (monitor != nullptr)
+	{
+		MONITORINFOEXA monitorInfo = {};
+		monitorInfo.cbSize = sizeof(monitorInfo);
+		if (GetMonitorInfoA(monitor, reinterpret_cast<MONITORINFO*>(&monitorInfo)))
+		{
+			DEVMODEA displayMode = {};
+			displayMode.dmSize = sizeof(displayMode);
+			if (EnumDisplaySettingsA(monitorInfo.szDevice, ENUM_CURRENT_SETTINGS, &displayMode) &&
+				displayMode.dmDisplayFrequency >= 30 &&
+				displayMode.dmDisplayFrequency <= 1000)
+			{
+				return static_cast<int>(displayMode.dmDisplayFrequency);
+			}
+		}
+	}
+
+	DEVMODEA displayMode = {};
+	displayMode.dmSize = sizeof(displayMode);
+	if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &displayMode) &&
+		displayMode.dmDisplayFrequency >= 30 &&
+		displayMode.dmDisplayFrequency <= 1000)
+	{
+		return static_cast<int>(displayMode.dmDisplayFrequency);
+	}
+
+	return 60;
+}
+
+void GameEngine::UpdateMapReveal()
+{
+	if (m_debugRevealMap || m_revealedTiles.size() != m_blocks.size())
+		return;
+
+	const int centerTileX = std::clamp(WorldToTileX(m_player.x), 0, m_blockWidth - 1);
+	const int centerTileY = std::clamp(WorldToTileY(m_player.y), 0, m_blockHeight - 1);
+	const int radiusX = (std::max)(18, static_cast<int>(std::ceil(GetViewHalfWidth() / m_tileSize)) + 5);
+	const int radiusY = (std::max)(12, static_cast<int>(std::ceil(GetViewHalfHeight() / m_tileSize)) + 5);
+	const int startX = (std::max)(0, centerTileX - radiusX);
+	const int endX = (std::min)(m_blockWidth - 1, centerTileX + radiusX);
+	const int startY = (std::max)(0, centerTileY - radiusY);
+	const int endY = (std::min)(m_blockHeight - 1, centerTileY + radiusY);
+
+	bool changed = false;
+	for (int y = startY; y <= endY; ++y)
+	{
+		const float normalizedY = static_cast<float>(y - centerTileY) / static_cast<float>(radiusY);
+		for (int x = startX; x <= endX; ++x)
+		{
+			const float normalizedX = static_cast<float>(x - centerTileX) / static_cast<float>(radiusX);
+			if (normalizedX * normalizedX + normalizedY * normalizedY > 1.0f)
+				continue;
+
+			const int index = y * m_blockWidth + x;
+			if (m_revealedTiles[index] != 0)
+				continue;
+
+			m_revealedTiles[index] = 1;
+			changed = true;
+		}
+	}
+
+	if (changed)
+		m_minimapDirty = true;
+}
+
+void GameEngine::RevealAllMap()
+{
+	if (m_revealedTiles.size() != m_blocks.size())
+		m_revealedTiles.assign(m_blocks.size(), 1);
+	else
+		std::fill(m_revealedTiles.begin(), m_revealedTiles.end(), 1);
+
+	m_debugRevealMap = true;
+	m_minimapExpanded = true;
+	m_minimapDirty = true;
+	SetStatusText("MAP REVEALED", 1.6f);
+}
+
 void GameEngine::UpdateInventoryInput()
 {
 	if (m_window != nullptr)
@@ -1451,6 +1977,71 @@ void GameEngine::UpdateInventoryInput()
 	}
 }
 
+bool GameEngine::CraftSword()
+{
+	if (m_inventoryCounts[SlotSword] > 0)
+	{
+		m_selectedInventorySlot = SlotSword;
+		SetStatusText("SWORD EQUIPPED", 1.2f);
+		return true;
+	}
+
+	if (!CanCraftSword())
+	{
+		SetStatusText("NEED 2 WOOD 3 STONE", 1.5f);
+		return false;
+	}
+
+	m_inventoryCounts[SlotWood] -= 2;
+	m_inventoryCounts[SlotStone] -= 3;
+	m_inventoryCounts[SlotSword] = 1;
+	m_selectedInventorySlot = SlotSword;
+	SetStatusText("SWORD CRAFTED", 1.8f);
+	return true;
+}
+
+bool GameEngine::CraftAxe()
+{
+	if (m_inventoryCounts[SlotAxe] > 0)
+	{
+		m_selectedInventorySlot = SlotAxe;
+		SetStatusText("AXE EQUIPPED", 1.2f);
+		return true;
+	}
+
+	if (!CanCraftAxe())
+	{
+		SetStatusText("NEED 3 WOOD 2 STONE", 1.5f);
+		return false;
+	}
+
+	m_inventoryCounts[SlotWood] -= 3;
+	m_inventoryCounts[SlotStone] -= 2;
+	m_inventoryCounts[SlotAxe] = 1;
+	m_selectedInventorySlot = SlotAxe;
+	SetStatusText("AXE CRAFTED", 1.8f);
+	return true;
+}
+
+bool GameEngine::CraftFirstAvailableAtTable()
+{
+	if (m_inventoryCounts[SlotSword] <= 0 && CanCraftSword())
+		return CraftSword();
+	if (m_inventoryCounts[SlotAxe] <= 0 && CanCraftAxe())
+		return CraftAxe();
+	if (m_inventoryCounts[SlotSword] <= 0)
+		return CraftSword();
+	if (m_inventoryCounts[SlotAxe] <= 0)
+		return CraftAxe();
+	if (m_selectedInventorySlot != SlotSword)
+		return CraftSword();
+	if (m_selectedInventorySlot != SlotAxe)
+		return CraftAxe();
+
+	SetStatusText("TOOLS READY", 1.3f);
+	return false;
+}
+
 void GameEngine::UpdateCrafting(float deltaTime)
 {
 	if (m_statusTextTimer > 0.0f)
@@ -1463,48 +2054,45 @@ void GameEngine::UpdateCrafting(float deltaTime)
 		}
 	}
 
-	if (m_input == nullptr || !m_input->IsDown(KeyC, this))
+	if (m_input == nullptr)
 		return;
 
 	if (IsCraftingTableNearby())
 	{
-		if (m_inventoryCounts[SlotSword] <= 0 && CanCraftSword())
+		if (IsCursorOverCraftingPanel() && IsKeyHeld(VK_LBUTTON))
+			m_uiConsumesLeftMouse = true;
+
+		if (m_input->IsDown(VK_LBUTTON, this))
 		{
-			m_inventoryCounts[SlotWood] -= 2;
-			m_inventoryCounts[SlotStone] -= 3;
-			m_inventoryCounts[SlotSword] = 1;
-			m_selectedInventorySlot = SlotSword;
-			SetStatusText("SWORD CRAFTED", 1.8f);
+			float cursorX = 0.0f;
+			float cursorY = 0.0f;
+			if (GetCursorViewPosition(cursorX, cursorY))
+			{
+				const int recipe = GetCraftingRecipeAt(cursorX, cursorY);
+				if (recipe >= 0)
+				{
+					m_uiConsumesLeftMouse = true;
+					if (recipe == 0)
+						CraftSword();
+					else if (recipe == 1)
+						CraftAxe();
+
+					return;
+				}
+			}
+		}
+
+		if (m_input->IsDown(KeyC, this))
+		{
+			CraftFirstAvailableAtTable();
 			return;
 		}
 
-		if (m_inventoryCounts[SlotAxe] <= 0 && CanCraftAxe())
-		{
-			m_inventoryCounts[SlotWood] -= 3;
-			m_inventoryCounts[SlotStone] -= 2;
-			m_inventoryCounts[SlotAxe] = 1;
-			m_selectedInventorySlot = SlotAxe;
-			SetStatusText("AXE CRAFTED", 1.8f);
-			return;
-		}
-
-		if (m_inventoryCounts[SlotSword] > 0 && m_selectedInventorySlot != SlotSword)
-		{
-			m_selectedInventorySlot = SlotSword;
-			SetStatusText("SWORD EQUIPPED", 1.4f);
-			return;
-		}
-
-		if (m_inventoryCounts[SlotAxe] > 0 && m_selectedInventorySlot != SlotAxe)
-		{
-			m_selectedInventorySlot = SlotAxe;
-			SetStatusText("AXE EQUIPPED", 1.4f);
-			return;
-		}
-
-		SetStatusText("NEED WOOD AND STONE", 1.8f);
 		return;
 	}
+
+	if (!m_input->IsDown(KeyC, this))
+		return;
 
 	if (m_inventoryCounts[SlotWood] >= 4)
 	{
@@ -1521,6 +2109,8 @@ void GameEngine::UpdateCrafting(float deltaTime)
 void GameEngine::TryPlaceSelectedBlock()
 {
 	if (m_input == nullptr || !m_input->IsDown(VK_RBUTTON, this))
+		return;
+	if (IsCursorOverCraftingPanel())
 		return;
 
 	int tileX = 0;
@@ -1657,7 +2247,7 @@ void GameEngine::UpdatePlayerCombat(float deltaTime)
 
 void GameEngine::TryPlayerAttack()
 {
-	if (m_input == nullptr || !m_input->IsDown(VK_LBUTTON, this))
+	if (m_uiConsumesLeftMouse || m_input == nullptr || !m_input->IsDown(VK_LBUTTON, this))
 		return;
 
 	if (!ShouldLeftClickAttack())
@@ -2064,6 +2654,12 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 			miningBlockIndex = tileY * m_blockWidth + tileX;
 	}
 
+	for (BlockBreakState& breakState : m_blockBreaks)
+		breakState.active = 0;
+
+	if (m_uiConsumesLeftMouse)
+		return;
+
 	if (miningBlockIndex < 0 || miningBlockIndex >= static_cast<int>(m_blockBreaks.size()))
 		return;
 
@@ -2087,7 +2683,9 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 	{
 		const float dropX = m_worldOriginX + tileX * m_tileSize;
 		const float dropY = m_worldOriginY - tileY * m_tileSize;
-		SpawnDroppedItem(dropX, dropY, m_blocks[miningBlockIndex].tileIndex, 1);
+		const unsigned short tileIndex = m_blocks[miningBlockIndex].tileIndex;
+		if (tileIndex != BlockLeaves)
+			SpawnDroppedItem(dropX, dropY, tileIndex, 1, tileIndex != BlockWood);
 		m_blocks[miningBlockIndex].visible = 0;
 		MarkBlockChunkDirty(tileX, tileY);
 	}
@@ -2102,17 +2700,25 @@ void GameEngine::DrawBackground()
 	const float surfaceWorldY = GetSurfaceWorldYAt(m_cameraX);
 	const float undergroundDepth = surfaceWorldY - m_cameraY;
 	const float undergroundAlpha = SmoothStep(Clamp01((undergroundDepth - 6.0f) / 96.0f));
-	const int centerTileX = std::clamp(WorldToTileX(m_cameraX), 0, m_blockWidth - 1);
-	constexpr int BiomeCount = 3;
-	constexpr int BlendTiles = 42;
-	float biomeWeights[BiomeCount] = {};
+	constexpr int BlendTiles = 72;
+	float biomeWeights[BackgroundBiomeCount] = {};
 	float totalWeight = 0.0f;
 
-	for (int offset = -BlendTiles; offset <= BlendTiles; ++offset)
+	const float leftEdge = m_worldOriginX - m_tileSize * 0.5f;
+	const float centerTileX = (m_cameraX - leftEdge) / m_tileSize;
+	const int firstTileX = static_cast<int>(std::floor(centerTileX)) - BlendTiles - 1;
+	const int lastTileX = static_cast<int>(std::ceil(centerTileX)) + BlendTiles + 1;
+
+	for (int sampleTileX = firstTileX; sampleTileX <= lastTileX; ++sampleTileX)
 	{
-		const int tileX = std::clamp(centerTileX + offset, 0, m_blockWidth - 1);
-		const int biome = m_biomes.empty() ? BiomeGrassland : std::clamp(static_cast<int>(m_biomes[tileX]), 0, BiomeCount - 1);
-		const float weight = static_cast<float>(BlendTiles + 1 - std::abs(offset));
+		const float distance = std::fabs(static_cast<float>(sampleTileX) - centerTileX);
+		if (distance > static_cast<float>(BlendTiles + 1))
+			continue;
+
+		const int tileX = std::clamp(sampleTileX, 0, m_blockWidth - 1);
+		const int biome = m_biomes.empty() ? BiomeGrassland : std::clamp(static_cast<int>(m_biomes[tileX]), 0, BackgroundBiomeCount - 1);
+		const float blend = 1.0f - distance / static_cast<float>(BlendTiles + 1);
+		const float weight = SmoothStep(Clamp01(blend));
 		biomeWeights[biome] += weight;
 		totalWeight += weight;
 	}
@@ -2123,37 +2729,50 @@ void GameEngine::DrawBackground()
 		return;
 	}
 
-	int dominantBiome = 0;
-	for (int biome = 1; biome < BiomeCount; ++biome)
+	for (int biome = 0; biome < BackgroundBiomeCount; ++biome)
+		biomeWeights[biome] /= totalWeight;
+
+	auto drawWeightedSurfaceLayer = [&](int layerIndex)
 	{
-		if (biomeWeights[biome] > biomeWeights[dominantBiome])
-			dominantBiome = biome;
-	}
+		float accumulatedWeight = 0.0f;
+		for (int biome = 0; biome < BackgroundBiomeCount; ++biome)
+		{
+			const float weight = biomeWeights[biome];
+			if (weight <= 0.001f)
+				continue;
 
-	DrawSkyBackground(dominantBiome, 1.0f);
-	for (int biome = 0; biome < BiomeCount; ++biome)
-	{
-		if (biome == dominantBiome)
-			continue;
+			accumulatedWeight += weight;
+			const float alpha = weight / accumulatedWeight;
+			const BackgroundImageLayer& layer = SurfaceBackgroundLayers[biome][layerIndex];
+			DrawBackgroundImageLayer(layer.textureFile, alpha * layer.alpha, layer.parallaxX, layer.parallaxY, layer.depth);
+		}
+	};
 
-		const float alpha = (biomeWeights[biome] / totalWeight) * (1.0f - undergroundAlpha) * 0.90f;
-		if (alpha > 0.02f)
-			DrawSkyBackground(biome, alpha);
-	}
+	for (int layerIndex = 0; layerIndex < SurfaceBackgroundLayerCount; ++layerIndex)
+		drawWeightedSurfaceLayer(layerIndex);
 
-	if (undergroundAlpha <= 0.01f)
+	const float caveCoverage = Clamp01(undergroundAlpha * (0.86f + Clamp01((undergroundDepth - 24.0f) / 360.0f) * 0.14f));
+	if (caveCoverage <= 0.01f)
 		return;
 
-	DrawUndergroundBackground(undergroundDepth, dominantBiome, undergroundAlpha);
-	for (int biome = 0; biome < BiomeCount; ++biome)
+	auto drawWeightedCaveLayer = [&](int layerIndex)
 	{
-		if (biome == dominantBiome)
-			continue;
+		float accumulatedCoverage = 1.0f - caveCoverage;
+		for (int biome = 0; biome < BackgroundBiomeCount; ++biome)
+		{
+			const float coverage = caveCoverage * biomeWeights[biome];
+			if (coverage <= 0.001f)
+				continue;
 
-		const float alpha = undergroundAlpha * (biomeWeights[biome] / totalWeight) * 0.92f;
-		if (alpha > 0.02f)
-			DrawUndergroundBackground(undergroundDepth, biome, alpha);
-	}
+			accumulatedCoverage += coverage;
+			const float alpha = coverage / accumulatedCoverage;
+			const BackgroundImageLayer& layer = CaveBackgroundLayers[biome][layerIndex];
+			DrawBackgroundImageLayer(layer.textureFile, alpha * layer.alpha, layer.parallaxX, layer.parallaxY, layer.depth);
+		}
+	};
+
+	for (int layerIndex = 0; layerIndex < CaveBackgroundLayerCount; ++layerIndex)
+		drawWeightedCaveLayer(layerIndex);
 }
 
 void GameEngine::DrawBackgroundImageLayer(const WCHAR* textureFile, float alpha, float parallaxX, float parallaxY, float depth)
@@ -2163,22 +2782,28 @@ void GameEngine::DrawBackgroundImageLayer(const WCHAR* textureFile, float alpha,
 
 	const float viewHalfWidth = GetViewHalfWidth();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float driftRange = 96.0f;
-	float wrappedOffset = std::fmod(m_cameraX * parallaxX, driftRange);
-	if (wrappedOffset > driftRange * 0.5f)
-		wrappedOffset -= driftRange;
-	else if (wrappedOffset < -driftRange * 0.5f)
-		wrappedOffset += driftRange;
+	const float layerWidth = viewHalfWidth * 2.0f + 320.0f;
+	const float layerHeight = viewHalfHeight * 2.32f;
+	float wrappedOffset = std::fmod(m_cameraX * parallaxX, layerWidth);
+	if (wrappedOffset < 0.0f)
+		wrappedOffset += layerWidth;
 
-	SpriteDesc desc;
-	desc.textureFile = textureFile;
-	desc.positionX = -wrappedOffset;
-	desc.positionY = -m_cameraY * parallaxY;
-	desc.width = viewHalfWidth * 2.0f + driftRange * 2.0f;
-	desc.height = viewHalfHeight * 2.32f;
-	desc.colorA = Clamp01(alpha);
-	desc.depth = depth;
-	m_renderer->DrawSprite(desc);
+	float centerX = -wrappedOffset;
+	while (centerX > -viewHalfWidth - layerWidth * 0.5f)
+		centerX -= layerWidth;
+
+	for (; centerX < viewHalfWidth + layerWidth * 0.5f; centerX += layerWidth)
+	{
+		SpriteDesc desc;
+		desc.textureFile = textureFile;
+		desc.positionX = centerX;
+		desc.positionY = -m_cameraY * parallaxY;
+		desc.width = layerWidth;
+		desc.height = layerHeight;
+		desc.colorA = Clamp01(alpha);
+		desc.depth = depth;
+		m_renderer->DrawSprite(desc);
+	}
 }
 
 void GameEngine::DrawSkyBackground(int biome, float alpha)
@@ -2187,8 +2812,9 @@ void GameEngine::DrawSkyBackground(int biome, float alpha)
 	if (alpha <= 0.0f)
 		return;
 
-	const int textureIndex = std::clamp(biome, 0, 2);
-	DrawBackgroundImageLayer(SkyBackgroundTextures[textureIndex], alpha, 0.070f, 0.018f, 5.0f);
+	const int textureIndex = std::clamp(biome, 0, BackgroundBiomeCount - 1);
+	for (const BackgroundImageLayer& layer : SurfaceBackgroundLayers[textureIndex])
+		DrawBackgroundImageLayer(layer.textureFile, alpha * layer.alpha, layer.parallaxX, layer.parallaxY, layer.depth);
 	return;
 
 	const float viewHalfWidth = GetViewHalfWidth();
@@ -2331,9 +2957,11 @@ void GameEngine::DrawUndergroundBackground(float undergroundDepth, int biome, fl
 	if (alpha <= 0.0f)
 		return;
 
-	const int textureIndex = std::clamp(biome, 0, 2);
+	const int textureIndex = std::clamp(biome, 0, BackgroundBiomeCount - 1);
 	const float depthRatio = Clamp01((undergroundDepth - 24.0f) / 360.0f);
-	DrawBackgroundImageLayer(UndergroundBackgroundTextures[textureIndex], alpha * (0.86f + depthRatio * 0.14f), 0.105f, 0.050f, 4.8f);
+	const float depthAlpha = alpha * (0.86f + depthRatio * 0.14f);
+	for (const BackgroundImageLayer& layer : CaveBackgroundLayers[textureIndex])
+		DrawBackgroundImageLayer(layer.textureFile, depthAlpha * layer.alpha, layer.parallaxX, layer.parallaxY, layer.depth);
 	return;
 
 	const float viewHalfWidth = GetViewHalfWidth();
@@ -2523,14 +3151,18 @@ void GameEngine::DrawWorld()
 	const bool wantsLeft = IsKeyHeld(KeyA);
 	const bool wantsRight = IsKeyHeld(KeyD);
 	const bool isMoving = wantsLeft != wantsRight;
+	const float playerSpriteYOffset = -m_playerCollisionHeight * 0.5f + m_playerDrawHeight * 0.5f;
 
 	SpriteDesc playerDesc;
 	playerDesc.positionX = m_player.x - m_cameraX;
-	playerDesc.positionY = m_player.y - m_cameraY + m_playerSpriteYOffset;
-	playerDesc.width = m_playerDrawSize;
-	playerDesc.height = m_playerDrawSize;
+	playerDesc.positionY = m_player.y - m_cameraY + playerSpriteYOffset;
+	playerDesc.width = m_playerDrawWidth;
+	playerDesc.height = m_playerDrawHeight;
 	playerDesc.flipX = m_player.facing > 0 ? 1 : 0;
 	playerDesc.depth = -1.0f;
+	playerDesc.textureFile = PlayerSpriteTexture;
+	playerDesc.atlasColumns = PlayerSpriteColumns;
+	playerDesc.atlasRows = PlayerSpriteRows;
 	if (m_attackTimer > 0.0f)
 	{
 		const float attackProgress = 1.0f - Clamp01(m_attackTimer / PlayerAttackDuration);
@@ -2542,19 +3174,16 @@ void GameEngine::DrawWorld()
 
 	if (!m_player.onGround)
 	{
-		playerDesc.textureFile = L"assets\\char\\jump.0.png";
+		playerDesc.tileIndex = PlayerJumpFrame;
 	}
 	else if (isMoving)
 	{
 		const int frame = static_cast<int>(m_player.animationTime / 0.11f) % 4;
-		playerDesc.textureFile = WalkTextures[frame];
+		playerDesc.tileIndex = PlayerWalkFrameStart + frame;
 	}
 	else
 	{
-		playerDesc.textureFile = L"assets\\char\\stand.png";
-		playerDesc.atlasColumns = 4;
-		playerDesc.atlasRows = 1;
-		playerDesc.tileIndex = static_cast<int>(m_player.animationTime / 0.24f) % 4;
+		playerDesc.tileIndex = PlayerIdleFrameStart + static_cast<int>(m_player.animationTime / 0.24f) % 4;
 	}
 
 	m_renderer->DrawSprite(playerDesc);
@@ -2563,6 +3192,7 @@ void GameEngine::DrawWorld()
 	DrawInventory();
 	DrawMinimap();
 	DrawPlayerStatus();
+	DrawCraftingPanel();
 	DrawCraftingPrompt();
 	DrawFrameStats();
 }
@@ -2658,92 +3288,52 @@ void GameEngine::DrawMonsters()
 			drawY < -viewHalfHeight - cullMargin || drawY > viewHalfHeight + cullMargin)
 			continue;
 
-		const float face = static_cast<float>(monster.facing);
 		const float hurt = Clamp01(monster.hurtTimer / 0.22f);
 		const float walk = std::sin(monster.animationTime);
-		const float walkOpposite = std::sin(monster.animationTime + 3.1415926f);
-		const float bob = std::fabs(walk) * 1.1f;
-		const float recoilX = -face * hurt * 4.0f;
-		const float lean = -face * (0.08f + hurt * 0.26f);
-		const float baseY = drawY + bob * 0.45f;
-		const float skinR = monster.underground ? 0.42f : 0.48f;
-		const float skinG = monster.underground ? 0.54f : 0.62f;
-		const float skinB = monster.underground ? 0.56f : 0.46f;
-		const float shirtR = monster.underground ? 0.20f : 0.17f;
-		const float shirtG = monster.underground ? 0.28f : 0.30f;
-		const float shirtB = monster.underground ? 0.42f : 0.34f;
+		const float bob = std::fabs(walk) * 0.8f;
+		const float recoilX = -static_cast<float>(monster.facing) * hurt * 4.0f;
+		const float baseY = drawY + bob * 0.35f;
+		const int biome = std::clamp(static_cast<int>(monster.biome), 0, BackgroundBiomeCount - 1);
+		const bool moving = monster.idleTimer <= 0.0f || monster.contactTimer > 0.0f;
+		const int frame = moving ? static_cast<int>(monster.animationTime) % MonsterSpriteColumns : 0;
 
-		auto drawPart = [this](float x, float y, float width, float height, float rotation,
-			float colorR, float colorG, float colorB, float colorA, float depth)
-		{
-			SpriteDesc partDesc;
-			partDesc.textureFile = nullptr;
-			partDesc.positionX = x;
-			partDesc.positionY = y;
-			partDesc.width = width;
-			partDesc.height = height;
-			partDesc.rotationRadians = rotation;
-			partDesc.colorR = colorR;
-			partDesc.colorG = colorG;
-			partDesc.colorB = colorB;
-			partDesc.colorA = colorA;
-			partDesc.depth = depth;
-			m_renderer->DrawSprite(partDesc);
-		};
+		SpriteDesc shadowDesc;
+		shadowDesc.textureFile = nullptr;
+		shadowDesc.positionX = drawX;
+		shadowDesc.positionY = drawY - MonsterCollisionHeight * 0.52f;
+		shadowDesc.width = 20.0f;
+		shadowDesc.height = 3.2f;
+		shadowDesc.colorA = 0.24f;
+		shadowDesc.depth = -0.86f;
+		m_renderer->DrawSprite(shadowDesc);
 
-		drawPart(drawX, drawY - MonsterCollisionHeight * 0.52f, 17.0f, 3.2f, 0.0f,
-			0.0f, 0.0f, 0.0f, 0.22f, -0.86f);
-
-		drawPart(drawX - face * 3.0f + recoilX * 0.25f, baseY - 11.0f, 3.8f, 13.0f,
-			walk * 0.22f, 0.12f, 0.13f, 0.16f, 1.0f, -0.91f);
-		drawPart(drawX + face * 3.2f + recoilX * 0.25f, baseY - 11.0f, 3.8f, 13.0f,
-			walkOpposite * 0.22f, 0.10f, 0.11f, 0.14f, 1.0f, -0.915f);
-
-		drawPart(drawX + recoilX * 0.55f, baseY + 0.5f, 13.0f, 18.5f, lean,
-			shirtR + hurt * 0.38f,
-			shirtG - hurt * 0.08f,
-			shirtB - hurt * 0.08f,
-			1.0f,
-			-0.93f);
-
-		drawPart(drawX + face * 8.0f + recoilX * 0.85f, baseY + 2.5f, 3.8f, 15.0f,
-			-face * (0.60f + hurt * 0.42f) + walk * 0.10f,
-			skinR + hurt * 0.48f,
-			skinG - hurt * 0.16f,
-			skinB - hurt * 0.16f,
-			1.0f,
-			-0.945f);
-		drawPart(drawX - face * 7.2f + recoilX * 0.35f, baseY + 1.5f, 3.5f, 13.5f,
-			-face * (0.32f + hurt * 0.16f) + walkOpposite * 0.12f,
-			skinR * 0.86f + hurt * 0.45f,
-			skinG * 0.86f - hurt * 0.14f,
-			skinB * 0.86f - hurt * 0.14f,
-			1.0f,
-			-0.925f);
-
-		drawPart(drawX + recoilX, baseY + 15.5f + hurt * 1.2f, 11.5f, 10.5f, lean * 0.55f,
-			skinR + hurt * 0.50f,
-			skinG - hurt * 0.18f,
-			skinB - hurt * 0.18f,
-			1.0f,
-			-0.955f);
-		drawPart(drawX + face * 2.9f + recoilX, baseY + 16.2f, 2.0f, 2.0f, 0.0f,
-			0.03f, 0.04f, 0.035f, 1.0f, -0.965f);
-		drawPart(drawX - face * 1.2f + recoilX, baseY + 16.0f, 1.7f, 1.7f, 0.0f,
-			0.03f, 0.04f, 0.035f, 1.0f, -0.965f);
-		drawPart(drawX + face * 2.0f + recoilX, baseY + 12.4f - hurt * 1.0f, 4.8f, 1.2f, -face * 0.10f,
-			0.06f + hurt * 0.35f, 0.04f, 0.035f, 1.0f, -0.965f);
+		SpriteDesc monsterDesc;
+		monsterDesc.textureFile = MonsterSpriteTextures[biome];
+		monsterDesc.positionX = drawX + recoilX;
+		monsterDesc.positionY = baseY + MonsterSpriteYOffset;
+		monsterDesc.width = MonsterSpriteDrawSize;
+		monsterDesc.height = MonsterSpriteDrawSize;
+		monsterDesc.atlasColumns = MonsterSpriteColumns;
+		monsterDesc.atlasRows = MonsterSpriteRows;
+		monsterDesc.tileIndex = frame;
+		monsterDesc.flipX = monster.facing < 0 ? 1 : 0;
+		monsterDesc.colorR = 1.0f;
+		monsterDesc.colorG = 1.0f - hurt * 0.48f;
+		monsterDesc.colorB = 1.0f - hurt * 0.48f;
+		monsterDesc.depth = -0.95f;
+		m_renderer->DrawSprite(monsterDesc);
 
 		if (hurt > 0.0f)
 		{
-			drawPart(drawX - face * 7.0f, baseY + 10.0f, 8.0f, 2.0f, face * 0.45f,
-				0.95f, 0.18f, 0.12f, 0.35f * hurt, -0.98f);
+			DrawSolidRect(drawX - static_cast<float>(monster.facing) * 7.0f, baseY + 10.0f,
+				8.0f, 2.0f, 0.95f, 0.18f, 0.12f, 0.35f * hurt, -0.98f);
 		}
 
 		const float healthRatio = Clamp01(static_cast<float>(monster.health) / static_cast<float>((std::max)(1, monster.maxHealth)));
 		const float barWidth = 18.0f;
-		DrawSolidRect(drawX, baseY + 24.0f, barWidth, 2.4f, 0.02f, 0.02f, 0.02f, 0.80f, -0.96f);
-		DrawSolidRect(drawX - (barWidth * (1.0f - healthRatio)) * 0.5f, baseY + 24.0f,
+		const float barY = baseY + MonsterSpriteYOffset + MonsterSpriteDrawSize * 0.46f;
+		DrawSolidRect(drawX, barY, barWidth, 2.4f, 0.02f, 0.02f, 0.02f, 0.80f, -0.96f);
+		DrawSolidRect(drawX - (barWidth * (1.0f - healthRatio)) * 0.5f, barY,
 			barWidth * healthRatio, 2.4f, 0.86f, 0.18f, 0.14f, 1.0f, -0.97f);
 	}
 }
@@ -3115,25 +3705,49 @@ void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float 
 
 void GameEngine::DrawMinimap()
 {
-	const int sampleStep = 3;
-	const float pixelSize = 3.0f;
+	const bool expanded = m_minimapExpanded;
+	const int sampleStep = expanded ? 1 : 3;
 	const int centerTileX = std::clamp(WorldToTileX(m_cameraX), 0, m_blockWidth - 1);
 	const int centerTileY = std::clamp(WorldToTileY(m_cameraY), 0, m_blockHeight - 1);
-	const int halfTilesX = 42;
-	const int halfTilesY = 25;
-	const int startTileX = (std::max)(0, centerTileX - halfTilesX);
-	const int endTileX = (std::min)(m_blockWidth - 1, centerTileX + halfTilesX);
-	const int startTileY = (std::max)(0, centerTileY - halfTilesY);
-	const int endTileY = (std::min)(m_blockHeight - 1, centerTileY + halfTilesY);
+	int startTileX = 0;
+	int endTileX = m_blockWidth - 1;
+	int startTileY = 0;
+	int endTileY = m_blockHeight - 1;
+
+	if (!expanded)
+	{
+		const int halfTilesX = 42;
+		const int halfTilesY = 25;
+		startTileX = (std::max)(0, centerTileX - halfTilesX);
+		endTileX = (std::min)(m_blockWidth - 1, centerTileX + halfTilesX);
+		startTileY = (std::max)(0, centerTileY - halfTilesY);
+		endTileY = (std::min)(m_blockHeight - 1, centerTileY + halfTilesY);
+	}
+
 	const int sampleWidth = ((endTileX - startTileX) / sampleStep) + 1;
 	const int sampleHeight = ((endTileY - startTileY) / sampleStep) + 1;
+	float pixelSize = 3.0f;
+	if (expanded)
+	{
+		const float availableWidth = GetViewHalfWidth() * 2.0f - 88.0f;
+		const float availableHeight = GetViewHalfHeight() * 2.0f - 102.0f;
+		pixelSize = std::clamp((std::min)(availableWidth / static_cast<float>(sampleWidth), availableHeight / static_cast<float>(sampleHeight)),
+			0.70f, 4.0f);
+	}
+
 	const float mapWidth = sampleWidth * pixelSize;
 	const float mapHeight = sampleHeight * pixelSize;
-	const float mapLeft = GetViewHalfWidth() - mapWidth - 14.0f;
-	const float mapTop = GetViewHalfHeight() - 16.0f;
+	const float mapLeft = expanded ? -mapWidth * 0.5f : GetViewHalfWidth() - mapWidth - 14.0f;
+	const float mapTop = expanded ? mapHeight * 0.5f : GetViewHalfHeight() - 16.0f;
+
+	if (expanded)
+	{
+		DrawSolidRect(0.0f, 0.0f, GetViewHalfWidth() * 2.0f, GetViewHalfHeight() * 2.0f,
+			0.0f, 0.0f, 0.0f, 0.42f, -5.2f);
+	}
 
 	DrawSolidRect(mapLeft + mapWidth * 0.5f, mapTop - mapHeight * 0.5f, mapWidth + 8.0f, mapHeight + 8.0f,
-		0.015f, 0.018f, 0.022f, 0.74f, -6.0f);
+		0.015f, 0.018f, 0.022f, expanded ? 0.88f : 0.74f, -6.0f);
 
 	auto getMapColor = [](unsigned short tileIndex, float& colorR, float& colorG, float& colorB)
 	{
@@ -3200,7 +3814,9 @@ void GameEngine::DrawMinimap()
 		m_cachedMinimapStartX != startTileX ||
 		m_cachedMinimapEndX != endTileX ||
 		m_cachedMinimapStartY != startTileY ||
-		m_cachedMinimapEndY != endTileY;
+		m_cachedMinimapEndY != endTileY ||
+		m_cachedMinimapSampleStep != sampleStep ||
+		m_cachedMinimapExpanded != expanded;
 
 	if (rebuildMinimap)
 	{
@@ -3239,7 +3855,7 @@ void GameEngine::DrawMinimap()
 			{
 				const int sampleX = (tileX - startTileX) / sampleStep;
 				const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
-				if (tile.visible == 0)
+				if (!IsMapTileRevealed(tileX, tileY) || tile.visible == 0)
 				{
 					flushRun();
 					continue;
@@ -3271,6 +3887,8 @@ void GameEngine::DrawMinimap()
 		m_cachedMinimapEndX = endTileX;
 		m_cachedMinimapStartY = startTileY;
 		m_cachedMinimapEndY = endTileY;
+		m_cachedMinimapSampleStep = sampleStep;
+		m_cachedMinimapExpanded = expanded;
 		m_minimapDirty = false;
 	}
 
@@ -3288,11 +3906,13 @@ void GameEngine::DrawMinimap()
 			-6.5f);
 	}
 
-	auto drawMapMarker = [&](float worldX, float worldY, float markerSize, float colorR, float colorG, float colorB)
+	auto drawMapMarker = [&](float worldX, float worldY, float markerSize, float colorR, float colorG, float colorB, bool requireReveal)
 	{
 		const int tileX = WorldToTileX(worldX);
 		const int tileY = WorldToTileY(worldY);
 		if (tileX < startTileX || tileX > endTileX || tileY < startTileY || tileY > endTileY)
+			return;
+		if (requireReveal && !IsMapTileRevealed(tileX, tileY))
 			return;
 
 		const float normalizedX = (static_cast<float>(tileX - startTileX)) / static_cast<float>(sampleStep);
@@ -3302,7 +3922,7 @@ void GameEngine::DrawMinimap()
 		DrawSolidRect(markerX, markerY, markerSize, markerSize, colorR, colorG, colorB, 1.0f, -7.0f);
 	};
 
-	drawMapMarker(m_player.x, m_player.y, 5.0f, 0.35f, 0.74f, 1.0f);
+	drawMapMarker(m_player.x, m_player.y, expanded ? 6.0f : 5.0f, 0.35f, 0.74f, 1.0f, false);
 	const float mapWorldCenterX = m_worldOriginX + (static_cast<float>(startTileX + endTileX) * 0.5f) * m_tileSize;
 	const float mapWorldCenterY = m_worldOriginY - (static_cast<float>(startTileY + endTileY) * 0.5f) * m_tileSize;
 	const collib::AABB mapWorldArea = collib::MakeAABB(
@@ -3314,7 +3934,7 @@ void GameEngine::DrawMinimap()
 	for (int monsterIndex : m_monsterQueryScratch)
 	{
 		const MonsterState& monster = m_monsters[monsterIndex];
-		drawMapMarker(monster.x, monster.y, 3.5f, 1.0f, 0.22f, 0.18f);
+		drawMapMarker(monster.x, monster.y, expanded ? 4.2f : 3.5f, 1.0f, 0.22f, 0.18f, true);
 	}
 
 	RectOutlineDesc outlineDesc;
@@ -3335,8 +3955,10 @@ void GameEngine::DrawFrameStats()
 {
 	char fpsText[16] = {};
 	char frameText[16] = {};
+	char capText[16] = {};
 	std::snprintf(fpsText, sizeof(fpsText), "FPS %03d", static_cast<int>(m_displayFps + 0.5f));
 	std::snprintf(frameText, sizeof(frameText), "%.1fMS", m_displayFrameMs);
+	std::snprintf(capText, sizeof(capText), m_frameLimitEnabled ? "CAP %03d" : "CAP OFF", m_targetRefreshRate);
 
 	const float x = -GetViewHalfWidth() + 14.0f;
 	const float y = GetViewHalfHeight() - 14.0f;
@@ -3344,6 +3966,8 @@ void GameEngine::DrawFrameStats()
 	DrawText(x, y, fpsText, 2.4f, 0.66f, 0.95f, 0.72f, 1.0f, -8.0f);
 	DrawText(x + 1.5f, y - 22.5f, frameText, 2.0f, 0.0f, 0.0f, 0.0f, 0.72f, -7.5f);
 	DrawText(x, y - 21.0f, frameText, 2.0f, 0.86f, 0.88f, 0.82f, 1.0f, -8.0f);
+	DrawText(x + 82.2f, y - 22.2f, capText, 1.7f, 0.0f, 0.0f, 0.0f, 0.70f, -7.5f);
+	DrawText(x + 81.0f, y - 21.0f, capText, 1.7f, 0.72f, 0.82f, 0.92f, 1.0f, -8.0f);
 
 	if (m_showRenderStats)
 		DrawRenderStatsOverlay();
@@ -3398,6 +4022,118 @@ void GameEngine::DrawPlayerStatus()
 		82.0f * healthRatio, 8.0f, 0.82f, 0.12f, 0.12f, 1.0f, -8.0f);
 }
 
+void GameEngine::DrawCraftingPanel()
+{
+	if (!IsCraftingTableNearby())
+		return;
+
+	const CraftingPanelLayout layout = GetCraftingPanelLayout();
+	const float panelCenterX = layout.left + layout.width * 0.5f;
+	const float panelCenterY = layout.top - layout.height * 0.5f;
+
+	DrawSolidRect(panelCenterX + 3.0f, panelCenterY - 3.0f, layout.width, layout.height,
+		0.0f, 0.0f, 0.0f, 0.34f, -6.2f);
+	DrawSolidRect(panelCenterX, panelCenterY, layout.width, layout.height,
+		0.030f, 0.034f, 0.038f, 0.86f, -6.5f);
+
+	RectOutlineDesc panelOutline;
+	panelOutline.positionX = panelCenterX;
+	panelOutline.positionY = panelCenterY;
+	panelOutline.width = layout.width;
+	panelOutline.height = layout.height;
+	panelOutline.thickness = 1.5f;
+	panelOutline.colorR = 0.70f;
+	panelOutline.colorG = 0.58f;
+	panelOutline.colorB = 0.34f;
+	panelOutline.colorA = 0.88f;
+	panelOutline.depth = -7.2f;
+	m_renderer->DrawRectOutline(panelOutline);
+
+	auto drawPanelText = [this](float x, float y, const char* text, float size,
+		float colorR, float colorG, float colorB, float depth)
+	{
+		DrawText(x + 1.1f, y - 1.1f, text, size, 0.0f, 0.0f, 0.0f, 0.72f, depth + 0.35f);
+		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, depth);
+	};
+
+	drawPanelText(layout.left + 13.0f, layout.top - 15.0f, "WORKBENCH", 2.1f, 0.94f, 0.82f, 0.54f, -8.0f);
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const int hoveredRecipe = GetCursorViewPosition(cursorX, cursorY) ? GetCraftingRecipeAt(cursorX, cursorY) : -1;
+
+	struct CraftingRow
+	{
+		const char* name;
+		int slot;
+		int woodCost;
+		int stoneCost;
+		bool owned;
+		bool craftable;
+	};
+
+	const CraftingRow rows[2] =
+	{
+		{ "SWORD", SlotSword, 2, 3, m_inventoryCounts[SlotSword] > 0, CanCraftSword() },
+		{ "AXE", SlotAxe, 3, 2, m_inventoryCounts[SlotAxe] > 0, CanCraftAxe() },
+	};
+
+	for (int i = 0; i < 2; ++i)
+	{
+		const CraftingRow& row = rows[i];
+		const float rowCenterX = layout.left + layout.width * 0.5f;
+		const float rowCenterY = layout.firstRowCenterY - i * (layout.rowHeight + 7.0f);
+		const bool active = row.owned || row.craftable;
+		const bool hovered = hoveredRecipe == i;
+
+		DrawSolidRect(rowCenterX, rowCenterY, layout.width - 18.0f, layout.rowHeight,
+			hovered ? 0.105f : 0.060f,
+			active ? 0.090f : 0.060f,
+			active ? 0.058f : 0.062f,
+			hovered ? 0.96f : 0.82f,
+			-6.8f);
+
+		RectOutlineDesc rowOutline;
+		rowOutline.positionX = rowCenterX;
+		rowOutline.positionY = rowCenterY;
+		rowOutline.width = layout.width - 18.0f;
+		rowOutline.height = layout.rowHeight;
+		rowOutline.thickness = hovered ? 2.0f : 1.0f;
+		rowOutline.colorR = active ? 0.74f : 0.38f;
+		rowOutline.colorG = active ? 0.66f : 0.38f;
+		rowOutline.colorB = active ? 0.42f : 0.40f;
+		rowOutline.colorA = hovered ? 1.0f : 0.72f;
+		rowOutline.depth = -7.3f;
+		m_renderer->DrawRectOutline(rowOutline);
+
+		DrawWeaponIcon(layout.left + 31.0f, rowCenterY + 1.0f, 28.0f, -7.8f, active ? 1.0f : 0.32f, row.slot);
+		drawPanelText(layout.left + 57.0f, rowCenterY + 14.0f, row.name, 1.9f,
+			active ? 0.92f : 0.58f, active ? 0.88f : 0.58f, active ? 0.76f : 0.60f, -8.0f);
+
+		char costText[32] = {};
+		std::snprintf(costText, sizeof(costText), "%d WOOD %d STONE", row.woodCost, row.stoneCost);
+		drawPanelText(layout.left + 57.0f, rowCenterY - 6.0f, costText, 1.45f,
+			row.craftable || row.owned ? 0.70f : 0.58f,
+			row.craftable || row.owned ? 0.84f : 0.56f,
+			row.craftable || row.owned ? 0.66f : 0.54f,
+			-8.0f);
+
+		const char* stateText = row.owned ? "OWNED" : (row.craftable ? "CRAFT" : "NEED");
+		const float badgeX = layout.left + layout.width - 39.0f;
+		DrawSolidRect(badgeX, rowCenterY, 54.0f, 20.0f,
+			row.owned ? 0.06f : (row.craftable ? 0.10f : 0.05f),
+			row.owned ? 0.09f : (row.craftable ? 0.16f : 0.05f),
+			row.owned ? 0.12f : (row.craftable ? 0.08f : 0.06f),
+			0.90f,
+			-7.5f);
+		drawPanelText(badgeX - 21.0f, rowCenterY + 5.0f, stateText, 1.35f,
+			row.owned ? 0.72f : (row.craftable ? 0.74f : 0.70f),
+			row.owned ? 0.88f : (row.craftable ? 0.95f : 0.62f),
+			row.owned ? 0.96f : (row.craftable ? 0.70f : 0.58f),
+			-8.0f);
+	}
+}
+
 void GameEngine::DrawCraftingPrompt()
 {
 	const float x = -GetViewHalfWidth() + 14.0f;
@@ -3417,25 +4153,7 @@ void GameEngine::DrawCraftingPrompt()
 	}
 
 	if (IsCraftingTableNearby())
-	{
-		drawLine(y, "TABLE CRAFTS", 0.95f, 0.82f, 0.46f);
-		int line = 1;
-		if (m_inventoryCounts[SlotSword] > 0)
-			drawLine(y - line++ * 19.0f, "SWORD READY SLOT 9", 0.76f, 0.90f, 0.92f);
-		else if (CanCraftSword())
-			drawLine(y - line++ * 19.0f, "SWORD 2 WOOD 3 STONE", 0.66f, 0.96f, 0.70f);
-
-		if (m_inventoryCounts[SlotAxe] > 0)
-			drawLine(y - line++ * 19.0f, "AXE READY SLOT 0", 0.78f, 0.88f, 0.70f);
-		else if (CanCraftAxe())
-			drawLine(y - line++ * 19.0f, "AXE 3 WOOD 2 STONE", 0.66f, 0.96f, 0.70f);
-
-		if (line == 1)
-			drawLine(y - line++ * 19.0f, "NEED WOOD AND STONE", 0.88f, 0.72f, 0.58f);
-
-		drawLine(y - line * 19.0f, "C CRAFTS NEXT", 0.82f, 0.84f, 0.78f);
 		return;
-	}
 
 	if (m_inventoryCounts[SlotCraftingTable] > 0)
 		drawLine(y, "PLACE TABLE SLOT 8", 0.86f, 0.88f, 0.80f);
@@ -3503,6 +4221,86 @@ void GameEngine::DrawGlyph(float x, float y, char glyph, float pixelSize, float 
 	m_renderer->DrawGlyphSprite(glyphDesc);
 }
 
+GameEngine::CraftingPanelLayout GameEngine::GetCraftingPanelLayout() const
+{
+	CraftingPanelLayout layout;
+	layout.left = -GetViewHalfWidth() + 14.0f;
+	layout.top = GetViewHalfHeight() - 112.0f;
+	layout.width = 226.0f;
+	layout.height = 158.0f;
+	layout.rowHeight = 48.0f;
+	layout.firstRowCenterY = layout.top - 62.0f;
+	return layout;
+}
+
+bool GameEngine::GetCursorViewPosition(float& viewX, float& viewY) const
+{
+	if (m_window == nullptr)
+		return false;
+
+	HWND* hwnd = m_window->GetHWND();
+	if (hwnd == nullptr || *hwnd == nullptr)
+		return false;
+
+	POINT cursorPosition = {};
+	if (!GetCursorPos(&cursorPosition) || !ScreenToClient(*hwnd, &cursorPosition))
+		return false;
+
+	const float windowWidth = m_window->GetWidth();
+	const float windowHeight = m_window->GetHeight();
+	if (windowWidth <= 0.0f || windowHeight <= 0.0f)
+		return false;
+
+	if (cursorPosition.x < 0 || cursorPosition.y < 0 ||
+		cursorPosition.x >= windowWidth || cursorPosition.y >= windowHeight)
+	{
+		return false;
+	}
+
+	const float normalizedX = (static_cast<float>(cursorPosition.x) / windowWidth) * 2.0f - 1.0f;
+	const float normalizedY = 1.0f - (static_cast<float>(cursorPosition.y) / windowHeight) * 2.0f;
+	viewX = normalizedX * GetViewHalfWidth();
+	viewY = normalizedY * GetViewHalfHeight();
+	return true;
+}
+
+int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
+{
+	if (!IsCraftingTableNearby())
+		return -1;
+
+	const CraftingPanelLayout layout = GetCraftingPanelLayout();
+	if (viewX < layout.left || viewX > layout.left + layout.width ||
+		viewY > layout.top || viewY < layout.top - layout.height)
+	{
+		return -1;
+	}
+
+	for (int recipe = 0; recipe < 2; ++recipe)
+	{
+		const float rowCenterY = layout.firstRowCenterY - recipe * (layout.rowHeight + 7.0f);
+		if (viewY <= rowCenterY + layout.rowHeight * 0.5f &&
+			viewY >= rowCenterY - layout.rowHeight * 0.5f)
+		{
+			return recipe;
+		}
+	}
+
+	return -1;
+}
+
+bool GameEngine::IsCursorOverCraftingPanel() const
+{
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (!GetCursorViewPosition(cursorX, cursorY) || !IsCraftingTableNearby())
+		return false;
+
+	const CraftingPanelLayout layout = GetCraftingPanelLayout();
+	return cursorX >= layout.left && cursorX <= layout.left + layout.width &&
+		cursorY <= layout.top && cursorY >= layout.top - layout.height;
+}
+
 void GameEngine::DrawHoveredBlockOutline()
 {
 	int tileX = 0;
@@ -3536,34 +4334,13 @@ void GameEngine::DrawHoveredBlockOutline()
 
 bool GameEngine::GetHoveredTile(int& tileX, int& tileY) const
 {
-	if (m_window == nullptr)
+	float viewX = 0.0f;
+	float viewY = 0.0f;
+	if (!GetCursorViewPosition(viewX, viewY))
 		return false;
 
-	HWND* hwnd = m_window->GetHWND();
-	if (hwnd == nullptr || *hwnd == nullptr)
-		return false;
-
-	POINT cursorPosition = {};
-	if (!GetCursorPos(&cursorPosition) || !ScreenToClient(*hwnd, &cursorPosition))
-		return false;
-
-	const float windowWidth = m_window->GetWidth();
-	const float windowHeight = m_window->GetHeight();
-	if (windowWidth <= 0.0f || windowHeight <= 0.0f)
-		return false;
-
-	if (cursorPosition.x < 0 || cursorPosition.y < 0 ||
-		cursorPosition.x >= windowWidth || cursorPosition.y >= windowHeight)
-	{
-		return false;
-	}
-
-	const float viewHalfHeight = GetViewHalfHeight();
-	const float viewHalfWidth = GetViewHalfWidth();
-	const float normalizedX = (static_cast<float>(cursorPosition.x) / windowWidth) * 2.0f - 1.0f;
-	const float normalizedY = 1.0f - (static_cast<float>(cursorPosition.y) / windowHeight) * 2.0f;
-	const float worldX = normalizedX * viewHalfWidth + m_cameraX;
-	const float worldY = normalizedY * viewHalfHeight + m_cameraY;
+	const float worldX = viewX + m_cameraX;
+	const float worldY = viewY + m_cameraY;
 
 	tileX = WorldToTileX(worldX);
 	tileY = WorldToTileY(worldY);
@@ -3642,6 +4419,18 @@ bool GameEngine::IsInventoryBlockSlot(int slot) const
 bool GameEngine::IsInventoryWeaponSlot(int slot) const
 {
 	return slot == SlotSword || slot == SlotAxe;
+}
+
+bool GameEngine::IsMapTileRevealed(int tileX, int tileY) const
+{
+	if (!IsTileInBounds(tileX, tileY))
+		return false;
+	if (m_debugRevealMap)
+		return true;
+	if (m_revealedTiles.size() != m_blocks.size())
+		return false;
+
+	return m_revealedTiles[tileY * m_blockWidth + tileX] != 0;
 }
 
 bool GameEngine::CanCraftSword() const
@@ -3727,19 +4516,11 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	if (!IsTileInBounds(tileX, tileY))
 		return false;
 
-	int startX = tileX;
-	int startY = tileY;
-	int blockIndex = tileY * m_blockWidth + tileX;
+	const int startX = tileX;
+	const int startY = tileY;
+	const int blockIndex = tileY * m_blockWidth + tileX;
 	if (m_blocks[blockIndex].visible == 0 || m_blocks[blockIndex].tileIndex != BlockWood)
-	{
-		startY = tileY - 1;
-		if (!IsTileInBounds(startX, startY))
-			return false;
-
-		blockIndex = startY * m_blockWidth + startX;
-		if (m_blocks[blockIndex].visible == 0 || m_blocks[blockIndex].tileIndex != BlockWood)
-			return false;
-	}
+		return false;
 
 	std::vector<unsigned char> visited(m_blocks.size(), 0);
 	std::vector<int> queue;
@@ -3750,6 +4531,8 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	auto tryAddWood = [&](int nextX, int nextY)
 	{
 		if (!IsTileInBounds(nextX, nextY))
+			return;
+		if (nextY > startY)
 			return;
 
 		const int nextIndex = nextY * m_blockWidth + nextX;
@@ -3777,14 +4560,63 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		tryAddWood(currentX, currentY + 1);
 	}
 
-	std::vector<int> leafQueue;
+	std::vector<int> fallingWoodIndices;
+	fallingWoodIndices.reserve(woodIndices.size());
+	for (int woodIndex : woodIndices)
+	{
+		if (woodIndex != blockIndex)
+			fallingWoodIndices.push_back(woodIndex);
+	}
+
 	std::vector<int> leafIndices;
-	leafQueue.reserve(96);
 	leafIndices.reserve(96);
+	constexpr int LeafSearchRadius = 5;
+
+	auto nearestHarvestedWoodDistance = [&](int leafX, int leafY)
+	{
+		int bestDistance = 9999;
+		for (int woodIndex : woodIndices)
+		{
+			const int woodX = woodIndex % m_blockWidth;
+			const int woodY = woodIndex / m_blockWidth;
+			const int distance = std::abs(leafX - woodX) + std::abs(leafY - woodY);
+			if (distance < bestDistance)
+				bestDistance = distance;
+		}
+
+		return bestDistance;
+	};
+
+	auto isClaimedByRemainingTree = [&](int leafX, int leafY, int harvestedDistance)
+	{
+		for (int offsetY = -LeafSearchRadius; offsetY <= LeafSearchRadius; ++offsetY)
+		{
+			for (int offsetX = -LeafSearchRadius; offsetX <= LeafSearchRadius; ++offsetX)
+			{
+				const int woodX = leafX + offsetX;
+				const int woodY = leafY + offsetY;
+				if (!IsTileInBounds(woodX, woodY))
+					continue;
+
+				const int woodIndex = woodY * m_blockWidth + woodX;
+				const BlockTile& tile = m_blocks[woodIndex];
+				if (tile.visible == 0 || tile.tileIndex != BlockWood || visited[woodIndex] == 1)
+					continue;
+
+				const int distance = std::abs(offsetX) + std::abs(offsetY);
+				if (distance <= harvestedDistance + 1)
+					return true;
+			}
+		}
+
+		return false;
+	};
 
 	auto tryAddLeaf = [&](int nextX, int nextY)
 	{
 		if (!IsTileInBounds(nextX, nextY))
+			return;
+		if (nextY > startY + 2)
 			return;
 
 		const int nextIndex = nextY * m_blockWidth + nextX;
@@ -3795,36 +4627,36 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		if (tile.visible == 0 || tile.tileIndex != BlockLeaves)
 			return;
 
-		visited[nextIndex] = 1;
-		leafQueue.push_back(nextIndex);
+		const int harvestedDistance = nearestHarvestedWoodDistance(nextX, nextY);
+		if (harvestedDistance > LeafSearchRadius + 2)
+			return;
+		if (isClaimedByRemainingTree(nextX, nextY, harvestedDistance))
+			return;
+
+		visited[nextIndex] = 2;
+		leafIndices.push_back(nextIndex);
 	};
 
 	for (int woodIndex : woodIndices)
 	{
 		const int currentX = woodIndex % m_blockWidth;
 		const int currentY = woodIndex / m_blockWidth;
-		tryAddLeaf(currentX - 1, currentY);
-		tryAddLeaf(currentX + 1, currentY);
-		tryAddLeaf(currentX, currentY - 1);
-		tryAddLeaf(currentX, currentY + 1);
+		for (int offsetY = -LeafSearchRadius; offsetY <= LeafSearchRadius; ++offsetY)
+		{
+			for (int offsetX = -LeafSearchRadius; offsetX <= LeafSearchRadius; ++offsetX)
+			{
+				if (std::abs(offsetX) + std::abs(offsetY) > LeafSearchRadius + 2)
+					continue;
+
+				tryAddLeaf(currentX + offsetX, currentY + offsetY);
+			}
+		}
 	}
 
-	for (size_t head = 0; head < leafQueue.size(); ++head)
-	{
-		const int currentIndex = leafQueue[head];
-		leafIndices.push_back(currentIndex);
-		const int currentX = currentIndex % m_blockWidth;
-		const int currentY = currentIndex / m_blockWidth;
-		tryAddLeaf(currentX - 1, currentY);
-		tryAddLeaf(currentX + 1, currentY);
-		tryAddLeaf(currentX, currentY - 1);
-		tryAddLeaf(currentX, currentY + 1);
-	}
-
-	if (woodIndices.size() < 3 && leafIndices.empty())
+	if (fallingWoodIndices.empty() && leafIndices.empty())
 		return false;
 
-	for (int woodIndex : woodIndices)
+	for (int woodIndex : fallingWoodIndices)
 	{
 		m_blocks[woodIndex].visible = 0;
 		if (woodIndex >= 0 && woodIndex < static_cast<int>(m_blockBreaks.size()))
@@ -3841,9 +4673,15 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	}
 
 	m_minimapDirty = true;
-	const float dropX = m_worldOriginX + tileX * m_tileSize;
-	const float dropY = m_worldOriginY - tileY * m_tileSize;
-	SpawnDroppedItem(dropX, dropY + m_tileSize * 0.35f, BlockWood, static_cast<int>(woodIndices.size()));
+	for (int woodIndex : fallingWoodIndices)
+	{
+		const int woodX = woodIndex % m_blockWidth;
+		const int woodY = woodIndex / m_blockWidth;
+		const float dropX = m_worldOriginX + woodX * m_tileSize;
+		const float dropY = m_worldOriginY - woodY * m_tileSize;
+		SpawnDroppedItem(dropX, dropY, BlockWood, 1, false);
+	}
+
 	return true;
 }
 
@@ -3914,26 +4752,29 @@ void GameEngine::AddBlockToInventory(unsigned short tileIndex, int amount)
 	}
 }
 
-void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short tileIndex, int amount)
+void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short tileIndex, int amount, bool mergeNearby)
 {
 	if (amount <= 0)
 		return;
 
 	const float mergeDistance = m_tileSize * 1.35f;
-	for (DroppedItemState& item : m_droppedItems)
+	if (mergeNearby)
 	{
-		if (!item.alive || item.tileIndex != tileIndex)
-			continue;
+		for (DroppedItemState& item : m_droppedItems)
+		{
+			if (!item.alive || item.tileIndex != tileIndex)
+				continue;
 
-		const float dx = item.x - worldX;
-		const float dy = item.y - worldY;
-		if (dx * dx + dy * dy > mergeDistance * mergeDistance)
-			continue;
+			const float dx = item.x - worldX;
+			const float dy = item.y - worldY;
+			if (dx * dx + dy * dy > mergeDistance * mergeDistance)
+				continue;
 
-		item.amount += amount;
-		item.pickupDelay = (std::max)(item.pickupDelay, 0.18f);
-		item.velocityY = (std::max)(item.velocityY, m_tileSize * 4.0f);
-		return;
+			item.amount += amount;
+			item.pickupDelay = (std::max)(item.pickupDelay, 0.18f);
+			item.velocityY = (std::max)(item.velocityY, m_tileSize * 4.0f);
+			return;
+		}
 	}
 
 	DroppedItemState item;
@@ -4220,4 +5061,9 @@ void GameEngine::Release()
 	DeleteRenderer(m_renderer);
 	DeleteTimer(m_timer);
 	DeleteWindowInstance(m_window);
+	if (m_timerResolutionRaised)
+	{
+		timeEndPeriod(1);
+		m_timerResolutionRaised = false;
+	}
 }

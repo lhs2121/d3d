@@ -52,6 +52,7 @@ private:
 		int contactDirection = 0;
 		int health = 40;
 		int maxHealth = 40;
+		unsigned char biome = 0;
 		bool onGround = false;
 		bool alive = true;
 		bool underground = false;
@@ -90,12 +91,30 @@ private:
 		float drawWorldMs = 0.0f;
 	};
 
+	struct CraftingPanelLayout
+	{
+		float left = 0.0f;
+		float top = 0.0f;
+		float width = 0.0f;
+		float height = 0.0f;
+		float rowHeight = 0.0f;
+		float firstRowCenterY = 0.0f;
+	};
+
 	void InitializeWorld();
 	void UpdateFrameStats(float deltaTime);
 	void AccumulateCpuStats(const CpuFrameStats& stats);
+	void ToggleFrameLimiter();
+	void ApplyFrameLimiter(const LARGE_INTEGER& frameStart);
+	int GetMonitorRefreshRate() const;
+	void UpdateMapReveal();
+	void RevealAllMap();
 	void UpdatePlayer(float deltaTime);
 	void UpdateInventoryInput();
 	void UpdateCrafting(float deltaTime);
+	bool CraftSword();
+	bool CraftAxe();
+	bool CraftFirstAvailableAtTable();
 	void TryPlaceSelectedBlock();
 	void UpdatePlayerCombat(float deltaTime);
 	void TryPlayerAttack();
@@ -123,10 +142,15 @@ private:
 	void DrawFrameStats();
 	void DrawRenderStatsOverlay();
 	void DrawPlayerStatus();
+	void DrawCraftingPanel();
 	void DrawCraftingPrompt();
 	void DrawSolidRect(float centerX, float centerY, float width, float height, float colorR, float colorG, float colorB, float colorA, float depth);
 	void DrawText(float x, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth);
 	void DrawGlyph(float x, float y, char glyph, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth);
+	CraftingPanelLayout GetCraftingPanelLayout() const;
+	bool GetCursorViewPosition(float& viewX, float& viewY) const;
+	int GetCraftingRecipeAt(float viewX, float viewY) const;
+	bool IsCursorOverCraftingPanel() const;
 	bool GetHoveredTile(int& tileX, int& tileY) const;
 	bool GetHoveredBlockTile(int& tileX, int& tileY) const;
 	collib::AABB GetPlayerAABB(float playerX, float playerY) const;
@@ -138,6 +162,7 @@ private:
 	bool IsTileNearPlayer(int tileX, int tileY, float maxTiles) const;
 	bool IsInventoryBlockSlot(int slot) const;
 	bool IsInventoryWeaponSlot(int slot) const;
+	bool IsMapTileRevealed(int tileX, int tileY) const;
 	bool CanCraftSword() const;
 	bool CanCraftAxe() const;
 	bool CanPlaceBlockAt(int tileX, int tileY) const;
@@ -149,7 +174,7 @@ private:
 	bool IsGroundBelowBox(float centerX, float centerY, float width, float height) const;
 	void SetStatusText(const char* text, float duration);
 	void AddBlockToInventory(unsigned short tileIndex, int amount);
-	void SpawnDroppedItem(float worldX, float worldY, unsigned short tileIndex, int amount);
+	void SpawnDroppedItem(float worldX, float worldY, unsigned short tileIndex, int amount, bool mergeNearby = true);
 	void InitializeBlockChunkCache();
 	void MarkBlockChunkDirty(int tileX, int tileY);
 	void MarkBlockIndexDirty(int blockIndex);
@@ -177,6 +202,7 @@ private:
 	std::vector<BlockBreakState> m_blockBreaks;
 	std::vector<int> m_surfaceHeights;
 	std::vector<unsigned char> m_biomes;
+	std::vector<unsigned char> m_revealedTiles;
 	std::vector<MonsterState> m_monsters;
 	std::vector<DroppedItemState> m_droppedItems;
 	std::vector<int> m_monsterGridHeads;
@@ -200,16 +226,17 @@ private:
 	int m_cachedMinimapEndX = -1;
 	int m_cachedMinimapStartY = -1;
 	int m_cachedMinimapEndY = -1;
+	int m_cachedMinimapSampleStep = -1;
 	int m_surfaceRow = 28;
 	float m_tileSize = 16.0f;
 	float m_worldOriginX = -1024.0f;
 	float m_worldOriginY = 1040.0f;
 	float m_cameraX = 0.0f;
 	float m_cameraY = 0.0f;
-	float m_playerCollisionWidth = 10.0f;
-	float m_playerCollisionHeight = 46.0f;
-	float m_playerDrawSize = 102.0f;
-	float m_playerSpriteYOffset = 26.0f;
+	float m_playerCollisionWidth = 16.0f;
+	float m_playerCollisionHeight = 32.0f;
+	float m_playerDrawWidth = 16.0f;
+	float m_playerDrawHeight = 32.0f;
 	float m_playerSpawnX = 0.0f;
 	float m_playerSpawnY = 0.0f;
 	float m_playerInvulnerableTimer = 0.0f;
@@ -223,9 +250,16 @@ private:
 	int m_frameStatsCount = 0;
 	int m_cpuStatsCount = 0;
 	int m_playerHealth = 100;
+	int m_targetRefreshRate = 60;
 	unsigned int m_blockGridVersion = 1;
 	unsigned int m_blockChunkVersionCounter = 1;
 	bool m_showRenderStats = false;
+	bool m_frameLimitEnabled = false;
+	bool m_timerResolutionRaised = false;
+	bool m_uiConsumesLeftMouse = false;
+	bool m_minimapExpanded = false;
+	bool m_debugRevealMap = false;
+	bool m_cachedMinimapExpanded = false;
 	bool m_minimapDirty = true;
 	std::vector<unsigned int> m_blockChunkVersions;
 	std::array<char, 48> m_statusText = {};
