@@ -14,6 +14,7 @@ namespace
 	constexpr int KeyA = 0x41;
 	constexpr int KeyC = 0x43;
 	constexpr int KeyD = 0x44;
+	constexpr int KeyStats = 0x45;
 	constexpr int KeyS = 0x53;
 	constexpr int KeyJump = VK_SPACE;
 	constexpr int KeyDebugStats = VK_F1;
@@ -81,9 +82,17 @@ namespace
 	constexpr float MonsterCollisionWidth = 10.0f;
 	constexpr float MonsterCollisionHeight = 30.0f;
 	constexpr float MonsterMoveSpeed = 48.0f;
+	constexpr int PlayerBaseMaxHealth = 100;
+	constexpr int PlayerBaseAttack = 8;
+	constexpr int PlayerBaseDefense = 1;
+	constexpr float PlayerMoveSpeedTiles = 6.8f;
+	constexpr float PlayerJumpSpeedTiles = 15.4f;
 	constexpr float PlayerAttackRange = 42.0f;
 	constexpr float PlayerAttackHeight = 40.0f;
 	constexpr float PlayerAttackDuration = 0.18f;
+	constexpr float PlayerHurtFlashDuration = 0.55f;
+	constexpr float PlayerKnockbackDuration = 0.28f;
+	constexpr float PlayerKnockbackCooldownDuration = 1.00f;
 
 	enum BlockType : unsigned short
 	{
@@ -117,6 +126,15 @@ namespace
 	constexpr int SlotAxe = 9;
 	constexpr int BlockInventorySlotCount = 8;
 
+	struct EquipmentStats
+	{
+		const char* name = "";
+		const char* role = "";
+		int attackBonus = 0;
+		int defenseBonus = 0;
+		float chopSpeedMultiplier = 1.0f;
+	};
+
 	constexpr unsigned short InventoryTileIndices[] =
 	{
 		BlockGrass,
@@ -128,6 +146,16 @@ namespace
 		BlockLeaves,
 		BlockCraftingTable,
 	};
+
+	EquipmentStats GetEquipmentStatsForSlot(int slot)
+	{
+		if (slot == SlotSword)
+			return { "SWORD", "COMBAT", 28, 0, 1.0f };
+		if (slot == SlotAxe)
+			return { "AXE", "HARVEST", 4, 0, 4.5f };
+
+		return {};
+	}
 
 	enum BiomeType
 	{
@@ -327,6 +355,7 @@ namespace
 		{ '7', { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 } },
 		{ '8', { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E } },
 		{ '9', { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C } },
+		{ '/', { 0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10 } },
 		{ 'A', { 0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 } },
 		{ 'B', { 0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E } },
 		{ 'C', { 0x0F, 0x10, 0x10, 0x10, 0x10, 0x10, 0x0F } },
@@ -445,6 +474,8 @@ void GameEngine::Update()
 		m_showRenderStats = !m_showRenderStats;
 	if (m_input->IsDown(KeyFrameLimit, this))
 		ToggleFrameLimiter();
+	if (m_input->IsDown(KeyStats, this))
+		m_showPlayerStats = !m_showPlayerStats;
 	if (m_input->IsDown(KeyMinimap, this))
 	{
 		m_minimapExpanded = !m_minimapExpanded;
@@ -476,6 +507,7 @@ void GameEngine::Update()
 	sectionStart = sectionEnd;
 
 	UpdateDroppedItems(deltaTime);
+	UpdateLeafParticles(deltaTime);
 
 	QueryPerformanceCounter(&sectionEnd);
 	cpuStats.itemsMs = CounterMilliseconds(sectionStart, sectionEnd);
@@ -506,12 +538,14 @@ void GameEngine::InitializeWorld()
 	m_revealedTiles.assign(static_cast<size_t>(m_blockWidth * m_blockHeight), 0);
 	m_monsters.clear();
 	m_droppedItems.clear();
+	m_leafParticles.clear();
 	m_monsterQueryScratch.clear();
 	m_monsterOverlapScratch.clear();
 	m_minimapRuns.clear();
 	m_minimapDirty = true;
 	m_debugRevealMap = false;
 	m_minimapExpanded = false;
+	m_showPlayerStats = false;
 	m_cachedMinimapSampleStep = -1;
 	m_worldOriginX = -((m_blockWidth - 1) * m_tileSize) * 0.5f;
 
@@ -1762,8 +1796,11 @@ void GameEngine::InitializeWorld()
 
 	m_inventoryCounts = { 12, 48, 48, 8, 48, 24, 32, 1, 0, 0 };
 	m_selectedInventorySlot = 0;
-	m_playerHealth = 100;
+	m_playerHealth = GetPlayerMaxHealth();
 	m_playerInvulnerableTimer = 0.0f;
+	m_playerHurtFlashTimer = 0.0f;
+	m_playerKnockbackTimer = 0.0f;
+	m_playerKnockbackCooldownTimer = 0.0f;
 	m_attackCooldown = 0.0f;
 	m_attackTimer = 0.0f;
 	SetStatusText("C NEAR TABLE MAKES TOOLS", 2.6f);
@@ -1773,6 +1810,7 @@ void GameEngine::InitializeWorld()
 	m_player.y = groundTop + (m_playerCollisionHeight * 0.5f) + 0.02f;
 	m_playerSpawnX = m_player.x;
 	m_playerSpawnY = m_player.y;
+	m_player.velocityX = 0.0f;
 	m_player.velocityY = 0.0f;
 	m_player.animationTime = 0.0f;
 	m_player.facing = 1;
@@ -2128,12 +2166,21 @@ void GameEngine::TryPlaceSelectedBlock()
 
 void GameEngine::UpdatePlayer(float deltaTime)
 {
-	const float moveSpeed = m_tileSize * 6.8f;
-	const float jumpSpeed = m_tileSize * 14.6f;
+	const float moveSpeed = m_tileSize * GetPlayerMoveSpeedTiles();
+	const float jumpSpeed = m_tileSize * GetPlayerJumpSpeedTiles();
 	const float gravity = -m_tileSize * 36.0f;
 	const float maxFallSpeed = -m_tileSize * 26.0f;
 	const float collisionInset = 0.5f;
 	const float skin = 0.02f;
+
+	if (m_playerKnockbackCooldownTimer > 0.0f)
+		m_playerKnockbackCooldownTimer = (std::max)(0.0f, m_playerKnockbackCooldownTimer - deltaTime);
+	if (m_playerKnockbackTimer > 0.0f)
+	{
+		m_playerKnockbackTimer = (std::max)(0.0f, m_playerKnockbackTimer - deltaTime);
+		if (m_playerKnockbackTimer <= 0.0f)
+			m_player.velocityX = 0.0f;
+	}
 
 	float move = 0.0f;
 	if (IsKeyHeld(KeyA))
@@ -2146,7 +2193,9 @@ void GameEngine::UpdatePlayer(float deltaTime)
 	else if (move > 0.0f)
 		m_player.facing = 1;
 
-	const float deltaX = move * moveSpeed * deltaTime;
+	const bool knockbackActive = m_playerKnockbackTimer > 0.0f && std::fabs(m_player.velocityX) > 0.01f;
+	const float controlScale = knockbackActive ? 0.35f : 1.0f;
+	const float deltaX = (move * moveSpeed * controlScale + (knockbackActive ? m_player.velocityX : 0.0f)) * deltaTime;
 	const float nextX = m_player.x + deltaX;
 	if (!IsAABBBlocked(GetPlayerAABB(nextX, m_player.y), collisionInset))
 	{
@@ -2161,6 +2210,22 @@ void GameEngine::UpdatePlayer(float deltaTime)
 	{
 		const int tileX = WorldToTileX(collib::Left(GetPlayerAABB(nextX, m_player.y)));
 		m_player.x = TileRight(tileX) + m_playerCollisionWidth * 0.5f + skin;
+	}
+	if (knockbackActive)
+	{
+		if (IsAABBBlocked(GetPlayerAABB(nextX, m_player.y), collisionInset) && deltaX * m_player.velocityX > 0.0f)
+		{
+			m_player.velocityX = 0.0f;
+			m_playerKnockbackTimer = 0.0f;
+		}
+		else
+		{
+			const float deceleration = m_tileSize * 34.0f * deltaTime;
+			if (m_player.velocityX > 0.0f)
+				m_player.velocityX = (std::max)(0.0f, m_player.velocityX - deceleration);
+			else
+				m_player.velocityX = (std::min)(0.0f, m_player.velocityX + deceleration);
+		}
 	}
 
 	if (m_input->IsDown(KeyJump, this) && m_player.onGround)
@@ -2227,18 +2292,24 @@ void GameEngine::UpdatePlayerCombat(float deltaTime)
 	if (m_attackTimer > 0.0f)
 		m_attackTimer -= deltaTime;
 	if (m_playerInvulnerableTimer > 0.0f)
-		m_playerInvulnerableTimer -= deltaTime;
+		m_playerInvulnerableTimer = (std::max)(0.0f, m_playerInvulnerableTimer - deltaTime);
+	if (m_playerHurtFlashTimer > 0.0f)
+		m_playerHurtFlashTimer = (std::max)(0.0f, m_playerHurtFlashTimer - deltaTime);
 
 	if (m_playerHealth <= 0)
 	{
 		m_player.x = m_playerSpawnX;
 		m_player.y = m_playerSpawnY;
+		m_player.velocityX = 0.0f;
 		m_player.velocityY = 0.0f;
 		m_player.onGround = true;
 		m_cameraX = m_player.x;
 		m_cameraY = m_player.y;
-		m_playerHealth = 100;
+		m_playerHealth = GetPlayerMaxHealth();
 		m_playerInvulnerableTimer = 1.5f;
+		m_playerHurtFlashTimer = 0.0f;
+		m_playerKnockbackTimer = 0.0f;
+		m_playerKnockbackCooldownTimer = 0.0f;
 		SetStatusText("RESPAWNED", 1.8f);
 	}
 
@@ -2260,7 +2331,7 @@ void GameEngine::TryPlayerAttack()
 	m_attackTimer = PlayerAttackDuration;
 	const bool swordEquipped = m_selectedInventorySlot == SlotSword && m_inventoryCounts[SlotSword] > 0;
 	const bool axeEquipped = m_selectedInventorySlot == SlotAxe && m_inventoryCounts[SlotAxe] > 0;
-	const int attackDamage = swordEquipped ? 36 : (axeEquipped ? 12 : 8);
+	const int attackDamage = GetPlayerAttackDamage();
 
 	const float attackCenterX = m_player.x + m_player.facing * (PlayerAttackRange * 0.48f);
 	const collib::AABB attackBox = collib::MakeAABB(
@@ -2280,7 +2351,17 @@ void GameEngine::TryPlayerAttack()
 		monster.health -= attackDamage;
 		monster.hurtTimer = 0.16f;
 		monster.velocityY = (std::max)(monster.velocityY, swordEquipped ? 170.0f : (axeEquipped ? 105.0f : 90.0f));
-		monster.x += m_player.facing * (swordEquipped ? 22.0f : (axeEquipped ? 11.0f : 9.0f));
+		const float knockbackDistance = m_player.facing * (swordEquipped ? 22.0f : (axeEquipped ? 11.0f : 9.0f));
+		const int stepCount = (std::max)(1, static_cast<int>(std::ceil(std::fabs(knockbackDistance) / 3.0f)));
+		const float stepX = knockbackDistance / static_cast<float>(stepCount);
+		for (int step = 0; step < stepCount; ++step)
+		{
+			const float nextX = monster.x + stepX;
+			if (IsAABBBlocked(GetMonsterAABB(nextX, monster.y), 0.5f))
+				break;
+
+			monster.x = nextX;
+		}
 		monster.facing = -m_player.facing;
 		hit = true;
 
@@ -2335,7 +2416,9 @@ void GameEngine::UpdateMonsters(float deltaTime)
 		const float playerDistanceY = std::fabs(playerDeltaY);
 		const float awarenessX = monster.underground ? m_tileSize * 24.0f : m_tileSize * 18.0f;
 		const float awarenessY = monster.underground ? m_tileSize * 11.0f : m_tileSize * 7.0f;
-		const bool chasingPlayer = playerDistanceX < awarenessX && playerDistanceY < awarenessY;
+		const float chaseLeashDistance = monster.underground ? m_tileSize * 26.0f : m_tileSize * 18.0f;
+		const bool tooFarFromHome = std::fabs(monster.x - monster.homeX) > chaseLeashDistance;
+		const bool chasingPlayer = !tooFarFromHome && playerDistanceX < awarenessX && playerDistanceY < awarenessY;
 		const bool touchingPlayer = collib::Intersects(GetPlayerAABB(m_player.x, m_player.y), GetMonsterAABB(monster.x, monster.y));
 		if (touchingPlayer && monster.contactTimer <= 0.0f)
 		{
@@ -2364,6 +2447,8 @@ void GameEngine::UpdateMonsters(float deltaTime)
 			{
 				monster.facing = monster.x < monster.homeX ? 1 : -1;
 				monster.idleTimer = 0.0f;
+				if (tooFarFromHome)
+					monster.aiTimer = (std::min)(monster.aiTimer, 0.25f);
 			}
 			else if (monster.aiTimer <= 0.0f)
 			{
@@ -2494,8 +2579,25 @@ void GameEngine::UpdateMonsters(float deltaTime)
 			m_playerInvulnerableTimer <= 0.0f &&
 			collib::Intersects(GetPlayerAABB(m_player.x, m_player.y), GetMonsterAABB(monster.x, monster.y)))
 		{
-			m_playerHealth -= monster.underground ? 11 : 8;
+			const int incomingDamage = monster.underground ? 11 : 8;
+			const int damageTaken = (std::max)(1, incomingDamage - GetPlayerDefense());
+			m_playerHealth -= damageTaken;
 			m_playerInvulnerableTimer = 0.75f;
+			m_playerHurtFlashTimer = PlayerHurtFlashDuration;
+			if (m_playerKnockbackCooldownTimer <= 0.0f)
+			{
+				int knockbackDirection = playerDeltaX >= 0.0f ? 1 : -1;
+				if (playerDistanceX < 1.0f)
+					knockbackDirection = monster.facing != 0 ? monster.facing : knockbackDirection;
+
+				const float knockbackSpeed = m_tileSize * (monster.underground ? 12.2f : 10.8f);
+				const float liftSpeed = m_tileSize * (m_player.onGround ? 6.2f : 4.4f);
+				m_player.velocityX = knockbackDirection * knockbackSpeed;
+				m_player.velocityY = (std::max)(m_player.velocityY, liftSpeed);
+				m_player.onGround = false;
+				m_playerKnockbackTimer = PlayerKnockbackDuration;
+				m_playerKnockbackCooldownTimer = PlayerKnockbackCooldownDuration;
+			}
 			monster.attackCooldown = monster.underground ? 0.85f : 1.05f;
 			if (monster.contactDirection == 0)
 				monster.contactDirection = monster.facing;
@@ -2565,7 +2667,7 @@ void GameEngine::UpdateDroppedItems(float deltaTime)
 	const float maxFallSpeed = -m_tileSize * 18.0f;
 	const float magnetRadius = m_tileSize * 5.2f;
 	const float pickupRadius = m_tileSize * 0.82f;
-	const float maxMagnetSpeed = m_tileSize * 22.0f;
+	const float maxMagnetSpeed = m_tileSize * 38.0f;
 	const float skin = 0.02f;
 
 	for (DroppedItemState& item : m_droppedItems)
@@ -2590,8 +2692,12 @@ void GameEngine::UpdateDroppedItems(float deltaTime)
 		{
 			const float distance = std::sqrt((std::max)(distanceSq, 0.001f));
 			const float pullStrength = 1.0f - Clamp01(distance / magnetRadius);
-			item.velocityX += (deltaToPlayerX / distance) * m_tileSize * (36.0f + pullStrength * 48.0f) * deltaTime;
-			item.velocityY += (deltaToPlayerY / distance) * m_tileSize * (36.0f + pullStrength * 48.0f) * deltaTime;
+			const float targetSpeed = m_tileSize * (18.0f + pullStrength * 32.0f);
+			const float targetVelocityX = (deltaToPlayerX / distance) * targetSpeed;
+			const float targetVelocityY = (deltaToPlayerY / distance) * targetSpeed;
+			const float steer = Clamp01(deltaTime * (10.0f + pullStrength * 18.0f));
+			item.velocityX += (targetVelocityX - item.velocityX) * steer;
+			item.velocityY += (targetVelocityY - item.velocityY) * steer;
 
 			const float speedSq = item.velocityX * item.velocityX + item.velocityY * item.velocityY;
 			if (speedSq > maxMagnetSpeed * maxMagnetSpeed)
@@ -2643,6 +2749,29 @@ void GameEngine::UpdateDroppedItems(float deltaTime)
 	}
 }
 
+void GameEngine::UpdateLeafParticles(float deltaTime)
+{
+	const float gravity = -m_tileSize * 18.0f;
+	for (LeafParticleState& particle : m_leafParticles)
+	{
+		if (!particle.alive)
+			continue;
+
+		particle.age += deltaTime;
+		if (particle.age >= particle.lifetime)
+		{
+			particle.alive = false;
+			continue;
+		}
+
+		particle.velocityY += gravity * deltaTime;
+		particle.velocityX *= (std::max)(0.0f, 1.0f - deltaTime * 0.85f);
+		particle.x += particle.velocityX * deltaTime;
+		particle.y += particle.velocityY * deltaTime;
+		particle.rotation += particle.angularVelocity * deltaTime;
+	}
+}
+
 void GameEngine::UpdateBlockBreaking(float deltaTime)
 {
 	int miningBlockIndex = -1;
@@ -2686,6 +2815,8 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 		const unsigned short tileIndex = m_blocks[miningBlockIndex].tileIndex;
 		if (tileIndex != BlockLeaves)
 			SpawnDroppedItem(dropX, dropY, tileIndex, 1, tileIndex != BlockWood);
+		else
+			SpawnLeafBreakEffect(tileX, tileY);
 		m_blocks[miningBlockIndex].visible = 0;
 		MarkBlockChunkDirty(tileX, tileY);
 	}
@@ -3145,6 +3276,7 @@ void GameEngine::DrawWorld()
 	m_renderer->DrawBlockGrid(gridDesc);
 	DrawBlockCracks();
 	DrawHoveredBlockOutline();
+	DrawLeafParticles();
 	DrawDroppedItems();
 	DrawMonsters();
 
@@ -3186,12 +3318,24 @@ void GameEngine::DrawWorld()
 		playerDesc.tileIndex = PlayerIdleFrameStart + static_cast<int>(m_player.animationTime / 0.24f) % 4;
 	}
 
+	if (m_playerHurtFlashTimer > 0.0f)
+	{
+		const float flashFade = Clamp01(m_playerHurtFlashTimer / PlayerHurtFlashDuration);
+		const bool flashOn = (static_cast<int>(m_playerHurtFlashTimer * 30.0f) % 2) == 0;
+		const float redPulse = (flashOn ? 0.78f : 0.28f) * flashFade;
+		playerDesc.colorR = 1.0f + redPulse * 0.85f;
+		playerDesc.colorG = 1.0f - redPulse * 0.58f;
+		playerDesc.colorB = 1.0f - redPulse * 0.58f;
+	}
+
 	m_renderer->DrawSprite(playerDesc);
 	DrawPlayerAttackMotion();
 	DrawAttackArc();
 	DrawInventory();
+	DrawEquipmentTooltip();
 	DrawMinimap();
 	DrawPlayerStatus();
+	DrawPlayerStatsPanel();
 	DrawCraftingPanel();
 	DrawCraftingPrompt();
 	DrawFrameStats();
@@ -3262,6 +3406,37 @@ void GameEngine::DrawCrackLine(float startX, float startY, float endX, float end
 	crackDesc.depth = -0.65f;
 
 	m_renderer->DrawSprite(crackDesc);
+}
+
+void GameEngine::DrawLeafParticles()
+{
+	for (const LeafParticleState& particle : m_leafParticles)
+	{
+		if (!particle.alive || particle.lifetime <= 0.0f)
+			continue;
+
+		const float progress = Clamp01(particle.age / particle.lifetime);
+		const float alpha = (1.0f - progress) * (1.0f - progress);
+		if (alpha <= 0.01f)
+			continue;
+
+		SpriteDesc leafDesc;
+		leafDesc.textureFile = BlockAtlasTexture;
+		leafDesc.positionX = particle.x - m_cameraX;
+		leafDesc.positionY = particle.y - m_cameraY;
+		leafDesc.width = particle.size * (1.0f - progress * 0.28f);
+		leafDesc.height = leafDesc.width;
+		leafDesc.atlasColumns = BlockAtlasColumns;
+		leafDesc.atlasRows = BlockAtlasRows;
+		leafDesc.tileIndex = BlockLeaves;
+		leafDesc.rotationRadians = particle.rotation;
+		leafDesc.colorR = 0.70f + progress * 0.16f;
+		leafDesc.colorG = 1.0f;
+		leafDesc.colorB = 0.66f - progress * 0.12f;
+		leafDesc.colorA = alpha;
+		leafDesc.depth = -0.92f;
+		m_renderer->DrawSprite(leafDesc);
+	}
 }
 
 void GameEngine::DrawMonsters()
@@ -3542,11 +3717,15 @@ void GameEngine::DrawInventory()
 	const float totalWidth = slotSize * InventorySlotCount + slotGap * (InventorySlotCount - 1);
 	const float slotY = -GetViewHalfHeight() + 38.0f;
 	const float startX = -totalWidth * 0.5f + slotSize * 0.5f;
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const int hoveredSlot = GetCursorViewPosition(cursorX, cursorY) ? GetInventorySlotAt(cursorX, cursorY) : -1;
 
 	for (int slot = 0; slot < InventorySlotCount; ++slot)
 	{
 		const float slotX = startX + slot * (slotSize + slotGap);
 		const bool selected = slot == m_selectedInventorySlot;
+		const bool hovered = slot == hoveredSlot;
 
 		SpriteDesc backgroundDesc;
 		backgroundDesc.textureFile = nullptr;
@@ -3554,10 +3733,10 @@ void GameEngine::DrawInventory()
 		backgroundDesc.positionY = slotY;
 		backgroundDesc.width = slotSize;
 		backgroundDesc.height = slotSize;
-		backgroundDesc.colorR = selected ? 0.16f : 0.035f;
-		backgroundDesc.colorG = selected ? 0.15f : 0.035f;
-		backgroundDesc.colorB = selected ? 0.09f : 0.04f;
-		backgroundDesc.colorA = selected ? 0.76f : 0.58f;
+		backgroundDesc.colorR = selected ? 0.16f : (hovered ? 0.075f : 0.035f);
+		backgroundDesc.colorG = selected ? 0.15f : (hovered ? 0.072f : 0.035f);
+		backgroundDesc.colorB = selected ? 0.09f : (hovered ? 0.070f : 0.04f);
+		backgroundDesc.colorA = selected ? 0.76f : (hovered ? 0.70f : 0.58f);
 		backgroundDesc.depth = -5.0f;
 		m_renderer->DrawSprite(backgroundDesc);
 
@@ -3566,11 +3745,11 @@ void GameEngine::DrawInventory()
 		outlineDesc.positionY = slotY;
 		outlineDesc.width = slotSize;
 		outlineDesc.height = slotSize;
-		outlineDesc.thickness = selected ? 3.0f : 1.5f;
-		outlineDesc.colorR = selected ? 1.0f : 0.55f;
-		outlineDesc.colorG = selected ? 0.86f : 0.58f;
-		outlineDesc.colorB = selected ? 0.28f : 0.62f;
-		outlineDesc.colorA = selected ? 1.0f : 0.78f;
+		outlineDesc.thickness = selected ? 3.0f : (hovered ? 2.0f : 1.5f);
+		outlineDesc.colorR = selected ? 1.0f : (hovered ? 0.82f : 0.55f);
+		outlineDesc.colorG = selected ? 0.86f : (hovered ? 0.78f : 0.58f);
+		outlineDesc.colorB = selected ? 0.28f : (hovered ? 0.60f : 0.62f);
+		outlineDesc.colorA = selected ? 1.0f : (hovered ? 0.94f : 0.78f);
 		outlineDesc.depth = -6.0f;
 		m_renderer->DrawRectOutline(outlineDesc);
 
@@ -4013,13 +4192,152 @@ void GameEngine::DrawPlayerStatus()
 {
 	const float x = -GetViewHalfWidth() + 14.0f;
 	const float y = GetViewHalfHeight() - 58.0f;
-	const float healthRatio = Clamp01(static_cast<float>(m_playerHealth) / 100.0f);
+	const float healthRatio = Clamp01(static_cast<float>(m_playerHealth) / static_cast<float>(GetPlayerMaxHealth()));
 
 	DrawText(x + 1.0f, y - 1.0f, "HP", 2.2f, 0.0f, 0.0f, 0.0f, 0.70f, -7.4f);
 	DrawText(x, y, "HP", 2.2f, 0.92f, 0.86f, 0.78f, 1.0f, -8.0f);
 	DrawSolidRect(x + 64.0f, y - 7.0f, 82.0f, 10.0f, 0.035f, 0.025f, 0.025f, 0.75f, -7.0f);
 	DrawSolidRect(x + 23.0f + 82.0f * healthRatio * 0.5f, y - 7.0f,
 		82.0f * healthRatio, 8.0f, 0.82f, 0.12f, 0.12f, 1.0f, -8.0f);
+}
+
+void GameEngine::DrawPlayerStatsPanel()
+{
+	if (!m_showPlayerStats)
+		return;
+
+	const float panelWidth = 178.0f;
+	const float panelHeight = 128.0f;
+	const float left = GetViewHalfWidth() - panelWidth - 14.0f;
+	const float top = GetViewHalfHeight() - 86.0f;
+	const float centerX = left + panelWidth * 0.5f;
+	const float centerY = top - panelHeight * 0.5f;
+
+	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, panelWidth, panelHeight,
+		0.0f, 0.0f, 0.0f, 0.34f, -6.2f);
+	DrawSolidRect(centerX, centerY, panelWidth, panelHeight,
+		0.026f, 0.030f, 0.034f, 0.88f, -6.5f);
+
+	RectOutlineDesc outline;
+	outline.positionX = centerX;
+	outline.positionY = centerY;
+	outline.width = panelWidth;
+	outline.height = panelHeight;
+	outline.thickness = 1.5f;
+	outline.colorR = 0.52f;
+	outline.colorG = 0.68f;
+	outline.colorB = 0.74f;
+	outline.colorA = 0.92f;
+	outline.depth = -7.2f;
+	m_renderer->DrawRectOutline(outline);
+
+	auto drawPanelText = [this](float x, float y, const char* text, float size,
+		float colorR, float colorG, float colorB)
+	{
+		DrawText(x + 1.1f, y - 1.1f, text, size, 0.0f, 0.0f, 0.0f, 0.72f, -7.6f);
+		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, -8.0f);
+	};
+
+	const bool hasEquipment = IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0;
+	const EquipmentStats equipment = hasEquipment ? GetEquipmentStatsForSlot(m_selectedInventorySlot) : EquipmentStats{ "HAND", "BASIC", 0, 0, 1.0f };
+
+	char hpText[32] = {};
+	char attackText[32] = {};
+	char defenseText[32] = {};
+	char speedText[32] = {};
+	char jumpText[32] = {};
+	char chopText[32] = {};
+	char gearText[32] = {};
+	std::snprintf(hpText, sizeof(hpText), "HP %d/%d", m_playerHealth, GetPlayerMaxHealth());
+	std::snprintf(attackText, sizeof(attackText), "ATK %d", GetPlayerAttackDamage());
+	std::snprintf(defenseText, sizeof(defenseText), "DEF %d", GetPlayerDefense());
+	std::snprintf(speedText, sizeof(speedText), "SPD %.1f", GetPlayerMoveSpeedTiles());
+	std::snprintf(jumpText, sizeof(jumpText), "JMP %.1f", GetPlayerJumpSpeedTiles());
+	std::snprintf(chopText, sizeof(chopText), "CHOP %.1fX", GetSelectedChopSpeedMultiplier());
+	std::snprintf(gearText, sizeof(gearText), "GEAR %s", equipment.name);
+
+	drawPanelText(left + 12.0f, top - 14.0f, "PLAYER", 2.0f, 0.86f, 0.94f, 0.98f);
+	drawPanelText(left + 12.0f, top - 35.0f, hpText, 1.65f, 0.94f, 0.82f, 0.76f);
+	drawPanelText(left + 12.0f, top - 53.0f, attackText, 1.65f, 0.95f, 0.84f, 0.58f);
+	drawPanelText(left + 92.0f, top - 53.0f, defenseText, 1.65f, 0.70f, 0.86f, 0.96f);
+	drawPanelText(left + 12.0f, top - 72.0f, speedText, 1.65f, 0.76f, 0.92f, 0.76f);
+	drawPanelText(left + 92.0f, top - 72.0f, jumpText, 1.65f, 0.78f, 0.82f, 0.98f);
+	drawPanelText(left + 12.0f, top - 91.0f, chopText, 1.65f, 0.78f, 0.90f, 0.62f);
+	drawPanelText(left + 12.0f, top - 111.0f, gearText, 1.55f, 0.86f, 0.86f, 0.78f);
+}
+
+void GameEngine::DrawEquipmentTooltip()
+{
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (!GetCursorViewPosition(cursorX, cursorY))
+		return;
+
+	const int slot = GetInventorySlotAt(cursorX, cursorY);
+	if (!IsInventoryWeaponSlot(slot))
+		return;
+
+	const EquipmentStats stats = GetEquipmentStatsForSlot(slot);
+	if (stats.name[0] == '\0')
+		return;
+
+	const float panelWidth = 150.0f;
+	const float panelHeight = 96.0f;
+	float left = cursorX + 16.0f;
+	float top = cursorY + 72.0f;
+	const float viewHalfWidth = GetViewHalfWidth();
+	const float viewHalfHeight = GetViewHalfHeight();
+	if (left + panelWidth > viewHalfWidth - 8.0f)
+		left = cursorX - panelWidth - 16.0f;
+	if (top > viewHalfHeight - 8.0f)
+		top = viewHalfHeight - 8.0f;
+	if (top - panelHeight < -viewHalfHeight + 8.0f)
+		top = -viewHalfHeight + panelHeight + 8.0f;
+
+	const float centerX = left + panelWidth * 0.5f;
+	const float centerY = top - panelHeight * 0.5f;
+	const bool owned = m_inventoryCounts[slot] > 0;
+	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, panelWidth, panelHeight,
+		0.0f, 0.0f, 0.0f, 0.35f, -7.0f);
+	DrawSolidRect(centerX, centerY, panelWidth, panelHeight,
+		0.030f, 0.034f, 0.038f, 0.92f, -7.3f);
+
+	RectOutlineDesc outline;
+	outline.positionX = centerX;
+	outline.positionY = centerY;
+	outline.width = panelWidth;
+	outline.height = panelHeight;
+	outline.thickness = 1.4f;
+	outline.colorR = owned ? 0.82f : 0.44f;
+	outline.colorG = owned ? 0.72f : 0.44f;
+	outline.colorB = owned ? 0.48f : 0.46f;
+	outline.colorA = 0.96f;
+	outline.depth = -8.0f;
+	m_renderer->DrawRectOutline(outline);
+
+	auto drawTipText = [this](float x, float y, const char* text, float size,
+		float colorR, float colorG, float colorB)
+	{
+		DrawText(x + 1.0f, y - 1.0f, text, size, 0.0f, 0.0f, 0.0f, 0.76f, -8.1f);
+		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, -8.5f);
+	};
+
+	char attackText[32] = {};
+	char defenseText[32] = {};
+	char chopText[32] = {};
+	std::snprintf(attackText, sizeof(attackText), "ATK BONUS %d", stats.attackBonus);
+	std::snprintf(defenseText, sizeof(defenseText), "DEF BONUS %d", stats.defenseBonus);
+	std::snprintf(chopText, sizeof(chopText), "CHOP %.1fX", stats.chopSpeedMultiplier);
+
+	DrawWeaponIcon(left + 21.0f, top - 25.0f, 30.0f, -8.3f, owned ? 1.0f : 0.34f, slot);
+	drawTipText(left + 43.0f, top - 14.0f, stats.name, 1.9f,
+		owned ? 0.96f : 0.56f, owned ? 0.88f : 0.56f, owned ? 0.66f : 0.58f);
+	drawTipText(left + 43.0f, top - 32.0f, owned ? "OWNED READY" : "LOCKED", 1.35f,
+		owned ? 0.70f : 0.74f, owned ? 0.92f : 0.58f, owned ? 0.74f : 0.56f);
+	drawTipText(left + 12.0f, top - 53.0f, attackText, 1.45f, 0.95f, 0.78f, 0.52f);
+	drawTipText(left + 12.0f, top - 68.0f, defenseText, 1.45f, 0.68f, 0.82f, 0.94f);
+	drawTipText(left + 12.0f, top - 83.0f, chopText, 1.45f, 0.76f, 0.90f, 0.60f);
+	drawTipText(left + 93.0f, top - 83.0f, stats.role, 1.25f, 0.82f, 0.82f, 0.74f);
 }
 
 void GameEngine::DrawCraftingPanel()
@@ -4283,6 +4601,29 @@ int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 			viewY >= rowCenterY - layout.rowHeight * 0.5f)
 		{
 			return recipe;
+		}
+	}
+
+	return -1;
+}
+
+int GameEngine::GetInventorySlotAt(float viewX, float viewY) const
+{
+	const float slotSize = 42.0f;
+	const float slotGap = 6.0f;
+	const float totalWidth = slotSize * InventorySlotCount + slotGap * (InventorySlotCount - 1);
+	const float slotY = -GetViewHalfHeight() + 38.0f;
+	const float startX = -totalWidth * 0.5f + slotSize * 0.5f;
+
+	for (int slot = 0; slot < InventorySlotCount; ++slot)
+	{
+		const float slotX = startX + slot * (slotSize + slotGap);
+		if (viewX >= slotX - slotSize * 0.5f &&
+			viewX <= slotX + slotSize * 0.5f &&
+			viewY >= slotY - slotSize * 0.5f &&
+			viewY <= slotY + slotSize * 0.5f)
+		{
+			return slot;
 		}
 	}
 
@@ -4666,6 +5007,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 
 	for (int leafIndex : leafIndices)
 	{
+		SpawnLeafBreakEffect(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
 		m_blocks[leafIndex].visible = 0;
 		if (leafIndex >= 0 && leafIndex < static_cast<int>(m_blockBreaks.size()))
 			m_blockBreaks[leafIndex] = BlockBreakState();
@@ -4687,11 +5029,110 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 
 float GameEngine::GetBlockBreakDuration(unsigned short tileIndex) const
 {
-	const bool axeEquipped = m_selectedInventorySlot == SlotAxe && m_inventoryCounts[SlotAxe] > 0;
-	if (axeEquipped && (tileIndex == BlockWood || tileIndex == BlockLeaves))
-		return BlockBreakDuration * 0.22f;
+	if (tileIndex == BlockWood || tileIndex == BlockLeaves)
+		return BlockBreakDuration / GetSelectedChopSpeedMultiplier();
 
 	return BlockBreakDuration;
+}
+
+int GameEngine::GetPlayerMaxHealth() const
+{
+	return PlayerBaseMaxHealth;
+}
+
+int GameEngine::GetPlayerDefense() const
+{
+	int defense = PlayerBaseDefense;
+	if (IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0)
+		defense += GetEquipmentStatsForSlot(m_selectedInventorySlot).defenseBonus;
+
+	return defense;
+}
+
+int GameEngine::GetPlayerAttackDamage() const
+{
+	int attack = PlayerBaseAttack;
+	if (IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0)
+		attack += GetEquipmentStatsForSlot(m_selectedInventorySlot).attackBonus;
+
+	return attack;
+}
+
+float GameEngine::GetPlayerMoveSpeedTiles() const
+{
+	return PlayerMoveSpeedTiles;
+}
+
+float GameEngine::GetPlayerJumpSpeedTiles() const
+{
+	return PlayerJumpSpeedTiles;
+}
+
+float GameEngine::GetSelectedChopSpeedMultiplier() const
+{
+	if (IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0)
+		return GetEquipmentStatsForSlot(m_selectedInventorySlot).chopSpeedMultiplier;
+
+	return 1.0f;
+}
+
+void GameEngine::SpawnLeafBreakEffect(int tileX, int tileY)
+{
+	if (!IsTileInBounds(tileX, tileY))
+		return;
+
+	constexpr int ShardCount = 4;
+	constexpr size_t MaxLeafParticles = 420;
+	const unsigned int seed = GetTickCount();
+	const float centerX = m_worldOriginX + tileX * m_tileSize;
+	const float centerY = m_worldOriginY - tileY * m_tileSize;
+
+	auto addParticle = [this](const LeafParticleState& particle)
+	{
+		for (LeafParticleState& existing : m_leafParticles)
+		{
+			if (existing.alive)
+				continue;
+
+			existing = particle;
+			return;
+		}
+
+		if (m_leafParticles.size() < MaxLeafParticles)
+		{
+			m_leafParticles.push_back(particle);
+			return;
+		}
+
+		LeafParticleState* oldest = nullptr;
+		for (LeafParticleState& existing : m_leafParticles)
+		{
+			if (oldest == nullptr || existing.age > oldest->age)
+				oldest = &existing;
+		}
+		if (oldest != nullptr)
+			*oldest = particle;
+	};
+
+	for (int i = 0; i < ShardCount; ++i)
+	{
+		const float randomA = Hash01(tileX + i * 17, tileY - i * 13, seed + 101u);
+		const float randomB = Hash01(tileX - i * 11, tileY + i * 19, seed + 211u);
+		const float randomC = Hash01(tileX + i * 29, tileY + i * 7, seed + 307u);
+		const float direction = randomA < 0.5f ? -1.0f : 1.0f;
+
+		LeafParticleState particle;
+		particle.x = centerX + (randomA - 0.5f) * m_tileSize * 0.58f;
+		particle.y = centerY + (randomB - 0.5f) * m_tileSize * 0.58f;
+		particle.velocityX = direction * m_tileSize * (3.4f + randomB * 6.8f);
+		particle.velocityY = m_tileSize * (3.8f + randomC * 7.4f);
+		particle.lifetime = 0.46f + randomA * 0.30f;
+		particle.rotation = randomB * 6.2831853f;
+		particle.angularVelocity = direction * (3.6f + randomC * 7.2f);
+		particle.size = m_tileSize * (0.30f + randomB * 0.24f);
+		particle.alive = true;
+		addParticle(particle);
+	}
 }
 
 bool GameEngine::IsGroundBelowBox(float centerX, float centerY, float width, float height) const

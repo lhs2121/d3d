@@ -20,6 +20,7 @@ private:
 	{
 		float x = 0.0f;
 		float y = 0.0f;
+		float velocityX = 0.0f;
 		float velocityY = 0.0f;
 		float animationTime = 0.0f;
 		int facing = 1;
@@ -67,6 +68,20 @@ private:
 		float pickupDelay = 0.0f;
 		unsigned short tileIndex = 0;
 		int amount = 1;
+		bool alive = false;
+	};
+
+	struct LeafParticleState
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float velocityX = 0.0f;
+		float velocityY = 0.0f;
+		float age = 0.0f;
+		float lifetime = 0.0f;
+		float rotation = 0.0f;
+		float angularVelocity = 0.0f;
+		float size = 0.0f;
 		bool alive = false;
 	};
 
@@ -121,6 +136,7 @@ private:
 	void UpdateBlockBreaking(float deltaTime);
 	void UpdateMonsters(float deltaTime);
 	void UpdateDroppedItems(float deltaTime);
+	void UpdateLeafParticles(float deltaTime);
 	void DrawWorld();
 	void DrawBackground();
 	void DrawBackgroundImageLayer(const WCHAR* textureFile, float alpha, float parallaxX, float parallaxY, float depth);
@@ -132,6 +148,7 @@ private:
 	void DrawHoveredBlockOutline();
 	void DrawBlockCracks();
 	void DrawCrackLine(float startX, float startY, float endX, float endY, float thickness, float alpha);
+	void DrawLeafParticles();
 	void DrawMonsters();
 	void DrawDroppedItems();
 	void DrawPlayerAttackMotion();
@@ -142,6 +159,8 @@ private:
 	void DrawFrameStats();
 	void DrawRenderStatsOverlay();
 	void DrawPlayerStatus();
+	void DrawPlayerStatsPanel();
+	void DrawEquipmentTooltip();
 	void DrawCraftingPanel();
 	void DrawCraftingPrompt();
 	void DrawSolidRect(float centerX, float centerY, float width, float height, float colorR, float colorG, float colorB, float colorA, float depth);
@@ -150,6 +169,7 @@ private:
 	CraftingPanelLayout GetCraftingPanelLayout() const;
 	bool GetCursorViewPosition(float& viewX, float& viewY) const;
 	int GetCraftingRecipeAt(float viewX, float viewY) const;
+	int GetInventorySlotAt(float viewX, float viewY) const;
 	bool IsCursorOverCraftingPanel() const;
 	bool GetHoveredTile(int& tileX, int& tileY) const;
 	bool GetHoveredBlockTile(int& tileX, int& tileY) const;
@@ -171,6 +191,13 @@ private:
 	bool IsCraftingTableNearby() const;
 	bool TryHarvestTreeAt(int tileX, int tileY);
 	float GetBlockBreakDuration(unsigned short tileIndex) const;
+	int GetPlayerMaxHealth() const;
+	int GetPlayerDefense() const;
+	int GetPlayerAttackDamage() const;
+	float GetPlayerMoveSpeedTiles() const;
+	float GetPlayerJumpSpeedTiles() const;
+	float GetSelectedChopSpeedMultiplier() const;
+	void SpawnLeafBreakEffect(int tileX, int tileY);
 	bool IsGroundBelowBox(float centerX, float centerY, float width, float height) const;
 	void SetStatusText(const char* text, float duration);
 	void AddBlockToInventory(unsigned short tileIndex, int amount);
@@ -205,6 +232,7 @@ private:
 	std::vector<unsigned char> m_revealedTiles;
 	std::vector<MonsterState> m_monsters;
 	std::vector<DroppedItemState> m_droppedItems;
+	std::vector<LeafParticleState> m_leafParticles;
 	std::vector<int> m_monsterGridHeads;
 	std::vector<int> m_monsterGridNext;
 	std::vector<int> m_monsterQueryScratch;
@@ -240,6 +268,9 @@ private:
 	float m_playerSpawnX = 0.0f;
 	float m_playerSpawnY = 0.0f;
 	float m_playerInvulnerableTimer = 0.0f;
+	float m_playerHurtFlashTimer = 0.0f;
+	float m_playerKnockbackTimer = 0.0f;
+	float m_playerKnockbackCooldownTimer = 0.0f;
 	float m_attackCooldown = 0.0f;
 	float m_attackTimer = 0.0f;
 	float m_frameStatsTimer = 0.0f;
@@ -259,6 +290,7 @@ private:
 	bool m_uiConsumesLeftMouse = false;
 	bool m_minimapExpanded = false;
 	bool m_debugRevealMap = false;
+	bool m_showPlayerStats = false;
 	bool m_cachedMinimapExpanded = false;
 	bool m_minimapDirty = true;
 	std::vector<unsigned int> m_blockChunkVersions;
