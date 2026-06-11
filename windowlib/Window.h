@@ -11,6 +11,8 @@ public:
 
 	void RunMessageLoop() override;
 
+	int ConsumeMouseWheelDelta() override;
+
 	const char* GetTitle() override { return m_szTitle; }
 
 	UINT GetDpi() override { return m_dpi; }
@@ -39,5 +41,6 @@ private:
 	HINSTANCE m_hInstance;
 	HWND m_hWnd;
 	HCURSOR m_hCursor = nullptr;
+	int m_mouseWheelDelta = 0;
 	IGameLoop* m_gameLoop;
 };

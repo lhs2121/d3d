@@ -19,6 +19,8 @@ struct IWindow
 
 	virtual void RunMessageLoop() = 0;
 
+	virtual int ConsumeMouseWheelDelta() = 0;
+
 	virtual const char* GetTitle() = 0;
 
 	virtual UINT GetDpi() = 0;

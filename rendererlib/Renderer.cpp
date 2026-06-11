@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "Renderer.h"
+#include <algorithm>
 #include <cmath>
 
 using namespace DirectX;
@@ -14,8 +15,6 @@ struct SpriteTransformData
 namespace
 {
 	constexpr size_t VerticesPerQuad = 4;
-	constexpr size_t IndicesPerQuad = 6;
-	constexpr size_t MaxGridQuads16Bit = 0xFFFF / VerticesPerQuad;
 
 	ID3D11Buffer* CreateDynamicBuffer(ID3D11Device* pDevice, UINT byteWidth, UINT bindFlags)
 	{
@@ -168,15 +167,20 @@ void Renderer::Initialize(UINT winWidth, UINT winHeight, HWND& hwnd)
 
 void Renderer::BeginFrame()
 {
+	m_currentFrameStats = RenderFrameStats();
 	m_pDeviceContext->ClearRenderTargetView(m_pRenderTargetView, m_clearColor);
 	m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 	m_pDeviceContext->OMSetRenderTargets(1, &m_pRenderTargetView, m_pDepthStencilView);
 	m_spritePipelineBound = false;
 	m_boundTexture = nullptr;
+	m_spriteBatchTexture = nullptr;
 }
 
 void Renderer::EndFrame()
 {
+	FlushSpriteBatch();
+	FlushGlyphBatch();
+	m_lastFrameStats = m_currentFrameStats;
 	m_pSwapChain->Present(0, 0);
 }
 
@@ -219,6 +223,55 @@ void Renderer::InitializePipeline()
 	m_pVertexShaderBlob->Release();
 	m_pVertexShaderBlob = nullptr;
 
+	D3D11_INPUT_ELEMENT_DESC gridIaDesc[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0 },
+		{ "TILE",0,DXGI_FORMAT_R32G32B32A32_FLOAT,1,0,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "TILE",1,DXGI_FORMAT_R32G32B32A32_FLOAT,1,16,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+	};
+
+	if (m_pGridVertexShaderBlob == nullptr ||
+		S_OK != m_pDevice->CreateInputLayout(gridIaDesc, 4, m_pGridVertexShaderBlob->GetBufferPointer(), m_pGridVertexShaderBlob->GetBufferSize(), &m_pipeline.pGridInputLayout))
+		__debugbreak();
+
+	m_pGridVertexShaderBlob->Release();
+	m_pGridVertexShaderBlob = nullptr;
+
+	D3D11_INPUT_ELEMENT_DESC spriteBatchIaDesc[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0 },
+		{ "SPRITE",0,DXGI_FORMAT_R32G32B32A32_FLOAT,1,0,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "SPRITE",1,DXGI_FORMAT_R32G32B32A32_FLOAT,1,16,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "SPRITE",2,DXGI_FORMAT_R32G32B32A32_FLOAT,1,32,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,1,48,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+	};
+
+	if (m_pSpriteBatchVertexShaderBlob == nullptr ||
+		S_OK != m_pDevice->CreateInputLayout(spriteBatchIaDesc, 6, m_pSpriteBatchVertexShaderBlob->GetBufferPointer(), m_pSpriteBatchVertexShaderBlob->GetBufferSize(), &m_pipeline.pSpriteBatchInputLayout))
+		__debugbreak();
+
+	m_pSpriteBatchVertexShaderBlob->Release();
+	m_pSpriteBatchVertexShaderBlob = nullptr;
+
+	D3D11_INPUT_ELEMENT_DESC glyphBatchIaDesc[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0 },
+		{ "GLYPH",0,DXGI_FORMAT_R32G32B32A32_FLOAT,1,0,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "ROWS",0,DXGI_FORMAT_R32G32B32A32_FLOAT,1,16,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "ROWS",1,DXGI_FORMAT_R32G32B32A32_FLOAT,1,32,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+		{ "COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,1,48,D3D11_INPUT_PER_INSTANCE_DATA,1 },
+	};
+
+	if (m_pGlyphBatchVertexShaderBlob == nullptr ||
+		S_OK != m_pDevice->CreateInputLayout(glyphBatchIaDesc, 6, m_pGlyphBatchVertexShaderBlob->GetBufferPointer(), m_pGlyphBatchVertexShaderBlob->GetBufferSize(), &m_pipeline.pGlyphBatchInputLayout))
+		__debugbreak();
+
+	m_pGlyphBatchVertexShaderBlob->Release();
+	m_pGlyphBatchVertexShaderBlob = nullptr;
+
 	SpriteTransformData transformData{ XMMatrixIdentity(), m_matView, m_matProjection };
 	SpriteData spriteData;
 	m_pipeline.pTransformConstantBuffer = d3d::CreateConstantBuffer(m_pDevice, &transformData, sizeof(SpriteTransformData));
@@ -230,18 +283,36 @@ void Renderer::ReleasePipeline()
 	ReleaseTextures();
 	if (m_pipeline.pPixelShader)
 		m_pipeline.pPixelShader->Release();
+	if (m_pipeline.pSpriteBatchPixelShader)
+		m_pipeline.pSpriteBatchPixelShader->Release();
+	if (m_pipeline.pGlyphBatchPixelShader)
+		m_pipeline.pGlyphBatchPixelShader->Release();
+	if (m_pipeline.pGlyphBatchVertexShader)
+		m_pipeline.pGlyphBatchVertexShader->Release();
+	if (m_pipeline.pSpriteBatchVertexShader)
+		m_pipeline.pSpriteBatchVertexShader->Release();
+	if (m_pipeline.pGridVertexShader)
+		m_pipeline.pGridVertexShader->Release();
 	if (m_pipeline.pVertexShader)
 		m_pipeline.pVertexShader->Release();
 	if (m_pipeline.pWhiteTexture)
 		m_pipeline.pWhiteTexture->Release();
-	if (m_pipeline.pGridIndexBuffer)
-		m_pipeline.pGridIndexBuffer->Release();
-	if (m_pipeline.pGridVertexBuffer)
-		m_pipeline.pGridVertexBuffer->Release();
+	if (m_pipeline.pGridInstanceBuffer)
+		m_pipeline.pGridInstanceBuffer->Release();
+	if (m_pipeline.pSpriteBatchInstanceBuffer)
+		m_pipeline.pSpriteBatchInstanceBuffer->Release();
+	if (m_pipeline.pGlyphBatchInstanceBuffer)
+		m_pipeline.pGlyphBatchInstanceBuffer->Release();
 	if (m_pipeline.pSpriteConstantBuffer)
 		m_pipeline.pSpriteConstantBuffer->Release();
 	if (m_pipeline.pTransformConstantBuffer)
 		m_pipeline.pTransformConstantBuffer->Release();
+	if (m_pGlyphBatchVertexShaderBlob)
+		m_pGlyphBatchVertexShaderBlob->Release();
+	if (m_pSpriteBatchVertexShaderBlob)
+		m_pSpriteBatchVertexShaderBlob->Release();
+	if (m_pGridVertexShaderBlob)
+		m_pGridVertexShaderBlob->Release();
 	if (m_pVertexShaderBlob)
 		m_pVertexShaderBlob->Release();
 	if (m_pipeline.pBlendState)
@@ -252,6 +323,12 @@ void Renderer::ReleasePipeline()
 		m_pipeline.pSampler->Release();
 	if (m_pipeline.pInputLayout)
 		m_pipeline.pInputLayout->Release();
+	if (m_pipeline.pGridInputLayout)
+		m_pipeline.pGridInputLayout->Release();
+	if (m_pipeline.pSpriteBatchInputLayout)
+		m_pipeline.pSpriteBatchInputLayout->Release();
+	if (m_pipeline.pGlyphBatchInputLayout)
+		m_pipeline.pGlyphBatchInputLayout->Release();
 	if (m_pipeline.pRasterizer)
 		m_pipeline.pRasterizer->Release();
 	if (m_pipeline.pQuadIndexBuffer)
@@ -324,6 +401,7 @@ void Renderer::BindTexture(ID3D11ShaderResourceView* texture)
 
 	m_pDeviceContext->PSSetShaderResources(0, 1, &texture);
 	m_boundTexture = texture;
+	++m_currentFrameStats.textureBinds;
 }
 
 void Renderer::EnsureGridBatchCapacity(size_t quadCount)
@@ -331,30 +409,240 @@ void Renderer::EnsureGridBatchCapacity(size_t quadCount)
 	if (quadCount == 0 || quadCount <= m_gridQuadCapacity)
 		return;
 
-	if (m_pipeline.pGridVertexBuffer)
+	if (m_pipeline.pGridInstanceBuffer)
 	{
-		m_pipeline.pGridVertexBuffer->Release();
-		m_pipeline.pGridVertexBuffer = nullptr;
-	}
-
-	if (m_pipeline.pGridIndexBuffer)
-	{
-		m_pipeline.pGridIndexBuffer->Release();
-		m_pipeline.pGridIndexBuffer = nullptr;
+		m_pipeline.pGridInstanceBuffer->Release();
+		m_pipeline.pGridInstanceBuffer = nullptr;
 	}
 
 	const size_t doubledCapacity = m_gridQuadCapacity > 0 ? m_gridQuadCapacity * 2 : 256;
 	m_gridQuadCapacity = quadCount > doubledCapacity ? quadCount : doubledCapacity;
-	if (m_gridQuadCapacity > MaxGridQuads16Bit)
-		m_gridQuadCapacity = MaxGridQuads16Bit;
 
-	m_pipeline.pGridVertexBuffer = CreateDynamicBuffer(m_pDevice,
-		static_cast<UINT>(m_gridQuadCapacity * VerticesPerQuad * sizeof(SimpleVertex)),
+	m_pipeline.pGridInstanceBuffer = CreateDynamicBuffer(m_pDevice,
+		static_cast<UINT>(m_gridQuadCapacity * sizeof(GridInstance)),
 		D3D11_BIND_VERTEX_BUFFER);
+}
 
-	m_pipeline.pGridIndexBuffer = CreateDynamicBuffer(m_pDevice,
-		static_cast<UINT>(m_gridQuadCapacity * IndicesPerQuad * sizeof(USHORT)),
-		D3D11_BIND_INDEX_BUFFER);
+void Renderer::EnsureSpriteBatchCapacity(size_t quadCount)
+{
+	if (quadCount == 0 || quadCount <= m_spriteBatchQuadCapacity)
+		return;
+
+	if (m_pipeline.pSpriteBatchInstanceBuffer)
+	{
+		m_pipeline.pSpriteBatchInstanceBuffer->Release();
+		m_pipeline.pSpriteBatchInstanceBuffer = nullptr;
+	}
+
+	const size_t doubledCapacity = m_spriteBatchQuadCapacity > 0 ? m_spriteBatchQuadCapacity * 2 : 512;
+	m_spriteBatchQuadCapacity = quadCount > doubledCapacity ? quadCount : doubledCapacity;
+
+	m_pipeline.pSpriteBatchInstanceBuffer = CreateDynamicBuffer(m_pDevice,
+		static_cast<UINT>(m_spriteBatchQuadCapacity * sizeof(SpriteBatchInstance)),
+		D3D11_BIND_VERTEX_BUFFER);
+}
+
+void Renderer::EnsureGlyphBatchCapacity(size_t quadCount)
+{
+	if (quadCount == 0 || quadCount <= m_glyphBatchQuadCapacity)
+		return;
+
+	if (m_pipeline.pGlyphBatchInstanceBuffer)
+	{
+		m_pipeline.pGlyphBatchInstanceBuffer->Release();
+		m_pipeline.pGlyphBatchInstanceBuffer = nullptr;
+	}
+
+	const size_t doubledCapacity = m_glyphBatchQuadCapacity > 0 ? m_glyphBatchQuadCapacity * 2 : 512;
+	m_glyphBatchQuadCapacity = quadCount > doubledCapacity ? quadCount : doubledCapacity;
+
+	m_pipeline.pGlyphBatchInstanceBuffer = CreateDynamicBuffer(m_pDevice,
+		static_cast<UINT>(m_glyphBatchQuadCapacity * sizeof(GlyphBatchInstance)),
+		D3D11_BIND_VERTEX_BUFFER);
+}
+
+void Renderer::ResetGridCache()
+{
+	m_gridCache = GridCacheState();
+}
+
+void Renderer::RebuildGridChunk(const BlockGridDesc& desc, GridChunkCache& chunk, int chunkX, int chunkY,
+	int chunkSize, int atlasColumns, int atlasRows, int tileCount, float uvWidth, float uvHeight)
+{
+	const int startX = (std::max)(0, chunkX * chunkSize);
+	const int endX = (std::min)(desc.width - 1, startX + chunkSize - 1);
+	const int startY = (std::max)(0, chunkY * chunkSize);
+	const int endY = (std::min)(desc.height - 1, startY + chunkSize - 1);
+	chunk.startX = startX;
+	chunk.startY = startY;
+	chunk.endX = endX;
+	chunk.endY = endY;
+	chunk.instances.clear();
+	chunk.instances.reserve(static_cast<size_t>((endX - startX + 1) * (endY - startY + 1)));
+
+	for (int y = startY; y <= endY; ++y)
+	{
+		const BlockTile* row = desc.tiles + y * desc.width;
+		for (int x = startX; x <= endX; ++x)
+		{
+			const BlockTile& tile = row[x];
+			if (!tile.visible)
+				continue;
+
+			int tileIndex = tile.tileIndex;
+			if (tileCount > 0)
+				tileIndex = tileIndex % tileCount;
+
+			const int tileX = tileIndex % atlasColumns;
+			const int tileY = tileIndex / atlasColumns;
+			const float u0 = tileX * uvWidth;
+			const float v0 = tileY * uvHeight;
+			chunk.instances.push_back({
+				math::Vec4(static_cast<float>(x) * desc.tileSize, -static_cast<float>(y) * desc.tileSize, desc.tileSize, 0.0f),
+				math::Vec4(u0, v0, uvWidth, uvHeight) });
+		}
+	}
+
+	chunk.valid = true;
+}
+
+void Renderer::QueueSprite(ID3D11ShaderResourceView* texture, const SpriteDesc& desc)
+{
+	if (texture == nullptr)
+		return;
+
+	if (m_spriteBatchTexture != nullptr && m_spriteBatchTexture != texture)
+		FlushSpriteBatch();
+
+	m_spriteBatchTexture = texture;
+
+	int atlasColumns = desc.atlasColumns > 0 ? desc.atlasColumns : 1;
+	int atlasRows = desc.atlasRows > 0 ? desc.atlasRows : 1;
+	int tileCount = atlasColumns * atlasRows;
+	int tileIndex = desc.tileIndex;
+	if (tileIndex < 0)
+		tileIndex = 0;
+	if (tileCount > 0)
+		tileIndex = tileIndex % tileCount;
+
+	const int tileX = tileIndex % atlasColumns;
+	const int tileY = tileIndex / atlasColumns;
+	const float uvWidth = 1.0f / atlasColumns;
+	const float uvHeight = 1.0f / atlasRows;
+	float u0 = tileX * uvWidth;
+	float widthScale = uvWidth;
+	if (desc.flipX)
+	{
+		u0 = (tileX + 1) * uvWidth;
+		widthScale = -uvWidth;
+	}
+
+	SpriteBatchInstance instance;
+	instance.transform = { desc.positionX, desc.positionY, desc.width, desc.height };
+	instance.rotationDepth = { std::sin(desc.rotationRadians), std::cos(desc.rotationRadians), desc.depth, 0.0f };
+	instance.uv = { u0, tileY * uvHeight, widthScale, uvHeight };
+	instance.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
+	m_spriteBatchInstances.push_back(instance);
+}
+
+void Renderer::FlushSpriteBatch()
+{
+	if (m_spriteBatchInstances.empty())
+		return;
+
+	if (m_pipeline.pSpriteBatchVertexShader == nullptr || m_pipeline.pSpriteBatchPixelShader == nullptr ||
+		m_pipeline.pSpriteBatchInputLayout == nullptr || m_spriteBatchTexture == nullptr)
+	{
+		m_spriteBatchInstances.clear();
+		m_spriteBatchTexture = nullptr;
+		return;
+	}
+
+	const size_t instanceCount = m_spriteBatchInstances.size();
+	EnsureSpriteBatchCapacity(instanceCount);
+
+	D3D11_MAPPED_SUBRESOURCE instanceResource;
+	if (S_OK != m_pDeviceContext->Map(m_pipeline.pSpriteBatchInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
+		__debugbreak();
+	memcpy_s(instanceResource.pData, m_spriteBatchQuadCapacity * sizeof(SpriteBatchInstance),
+		m_spriteBatchInstances.data(), m_spriteBatchInstances.size() * sizeof(SpriteBatchInstance));
+	m_pDeviceContext->Unmap(m_pipeline.pSpriteBatchInstanceBuffer, 0);
+
+	ID3D11Buffer* vertexBuffers[] = { m_pipeline.pQuadVertexBuffer, m_pipeline.pSpriteBatchInstanceBuffer };
+	UINT strides[] = { sizeof(SimpleVertex), sizeof(SpriteBatchInstance) };
+	UINT offsets[] = { 0, 0 };
+
+	m_spritePipelineBound = false;
+	m_pDeviceContext->IASetInputLayout(m_pipeline.pSpriteBatchInputLayout);
+	m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_pDeviceContext->VSSetShader(m_pipeline.pSpriteBatchVertexShader, nullptr, 0);
+	m_pDeviceContext->PSSetShader(m_pipeline.pSpriteBatchPixelShader, nullptr, 0);
+	m_pDeviceContext->PSSetSamplers(0, 1, &m_pipeline.pSampler);
+	m_pDeviceContext->RSSetState(m_pipeline.pRasterizer);
+	m_pDeviceContext->OMSetBlendState(m_pipeline.pBlendState, nullptr, 0xFFFFFFFF);
+	m_pDeviceContext->OMSetDepthStencilState(m_pipeline.pDepthStencilState, 0);
+	BindTexture(m_spriteBatchTexture);
+	m_pDeviceContext->IASetVertexBuffers(0, 2, vertexBuffers, strides, offsets);
+	m_pDeviceContext->IASetIndexBuffer(m_pipeline.pQuadIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+
+	SpriteTransformData transformData{ XMMatrixIdentity(), m_matView, m_matProjection };
+	d3d::BindVertexConstantBuffer(m_pDeviceContext, m_pipeline.pTransformConstantBuffer, &transformData, sizeof(SpriteTransformData), 0);
+	m_pDeviceContext->DrawIndexedInstanced(6, static_cast<UINT>(instanceCount), 0, 0, 0);
+
+	++m_currentFrameStats.drawCalls;
+	++m_currentFrameStats.spriteDrawCalls;
+	m_currentFrameStats.spriteQuads += static_cast<unsigned int>(instanceCount);
+	m_spriteBatchInstances.clear();
+	m_spriteBatchTexture = nullptr;
+	m_spritePipelineBound = false;
+}
+
+void Renderer::FlushGlyphBatch()
+{
+	if (m_glyphBatchInstances.empty())
+		return;
+
+	if (m_pipeline.pGlyphBatchVertexShader == nullptr || m_pipeline.pGlyphBatchPixelShader == nullptr ||
+		m_pipeline.pGlyphBatchInputLayout == nullptr)
+	{
+		m_glyphBatchInstances.clear();
+		return;
+	}
+
+	const size_t instanceCount = m_glyphBatchInstances.size();
+	EnsureGlyphBatchCapacity(instanceCount);
+
+	D3D11_MAPPED_SUBRESOURCE instanceResource;
+	if (S_OK != m_pDeviceContext->Map(m_pipeline.pGlyphBatchInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
+		__debugbreak();
+	memcpy_s(instanceResource.pData, m_glyphBatchQuadCapacity * sizeof(GlyphBatchInstance),
+		m_glyphBatchInstances.data(), m_glyphBatchInstances.size() * sizeof(GlyphBatchInstance));
+	m_pDeviceContext->Unmap(m_pipeline.pGlyphBatchInstanceBuffer, 0);
+
+	ID3D11Buffer* vertexBuffers[] = { m_pipeline.pQuadVertexBuffer, m_pipeline.pGlyphBatchInstanceBuffer };
+	UINT strides[] = { sizeof(SimpleVertex), sizeof(GlyphBatchInstance) };
+	UINT offsets[] = { 0, 0 };
+
+	m_spritePipelineBound = false;
+	m_pDeviceContext->IASetInputLayout(m_pipeline.pGlyphBatchInputLayout);
+	m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_pDeviceContext->VSSetShader(m_pipeline.pGlyphBatchVertexShader, nullptr, 0);
+	m_pDeviceContext->PSSetShader(m_pipeline.pGlyphBatchPixelShader, nullptr, 0);
+	m_pDeviceContext->RSSetState(m_pipeline.pRasterizer);
+	m_pDeviceContext->OMSetBlendState(m_pipeline.pBlendState, nullptr, 0xFFFFFFFF);
+	m_pDeviceContext->OMSetDepthStencilState(m_pipeline.pDepthStencilState, 0);
+	m_pDeviceContext->IASetVertexBuffers(0, 2, vertexBuffers, strides, offsets);
+	m_pDeviceContext->IASetIndexBuffer(m_pipeline.pQuadIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+
+	SpriteTransformData transformData{ XMMatrixIdentity(), m_matView, m_matProjection };
+	d3d::BindVertexConstantBuffer(m_pDeviceContext, m_pipeline.pTransformConstantBuffer, &transformData, sizeof(SpriteTransformData), 0);
+	m_pDeviceContext->DrawIndexedInstanced(6, static_cast<UINT>(instanceCount), 0, 0, 0);
+
+	++m_currentFrameStats.drawCalls;
+	++m_currentFrameStats.spriteDrawCalls;
+	m_currentFrameStats.spriteQuads += static_cast<unsigned int>(instanceCount);
+	m_glyphBatchInstances.clear();
+	m_spritePipelineBound = false;
 }
 
 void Renderer::LoadTexture(const WCHAR* textureFile)
@@ -509,6 +797,136 @@ void Renderer::LoadPipelineShader(const WCHAR* shaderFile)
 	if (S_OK != m_pDevice->CreateVertexShader(pVertexShaderBlob->GetBufferPointer(), pVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pVertexShader))
 		__debugbreak();
 
+	char* szGridMainName = new char[256];
+	memcpy_s(szGridMainName, 256, szFileName, len);
+	memcpy_s(szGridMainName + len, 256 - len, "_GridVS", sizeof("_GridVS"));
+
+	ID3DBlob* pGridVertexShaderBlob = nullptr;
+	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szGridMainName, "vs_5_0", flag, 0, &pGridVertexShaderBlob, &pErrorBlob);
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
+			OutputDebugStringA(error);
+			pErrorBlob->Release();
+			pErrorBlob = nullptr;
+		}
+		else
+		{
+			OutputDebugStringW(L"Grid vertex shader compile failed, but no error blob was returned: ");
+			OutputDebugStringW(wszCurrentDir);
+			OutputDebugStringW(L"\n");
+		}
+		__debugbreak();
+	}
+	if (S_OK != m_pDevice->CreateVertexShader(pGridVertexShaderBlob->GetBufferPointer(), pGridVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pGridVertexShader))
+		__debugbreak();
+
+	char* szBatchVertexMainName = new char[256];
+	memcpy_s(szBatchVertexMainName, 256, szFileName, len);
+	memcpy_s(szBatchVertexMainName + len, 256 - len, "_BatchVS", sizeof("_BatchVS"));
+
+	ID3DBlob* pSpriteBatchVertexShaderBlob = nullptr;
+	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szBatchVertexMainName, "vs_5_0", flag, 0, &pSpriteBatchVertexShaderBlob, &pErrorBlob);
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
+			OutputDebugStringA(error);
+			pErrorBlob->Release();
+			pErrorBlob = nullptr;
+		}
+		else
+		{
+			OutputDebugStringW(L"Sprite batch vertex shader compile failed, but no error blob was returned: ");
+			OutputDebugStringW(wszCurrentDir);
+			OutputDebugStringW(L"\n");
+		}
+		__debugbreak();
+	}
+	if (S_OK != m_pDevice->CreateVertexShader(pSpriteBatchVertexShaderBlob->GetBufferPointer(), pSpriteBatchVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pSpriteBatchVertexShader))
+		__debugbreak();
+
+	char* szBatchPixelMainName = new char[256];
+	memcpy_s(szBatchPixelMainName, 256, szFileName, len);
+	memcpy_s(szBatchPixelMainName + len, 256 - len, "_BatchPS", sizeof("_BatchPS"));
+
+	ID3DBlob* pSpriteBatchPixelShaderBlob = nullptr;
+	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szBatchPixelMainName, "ps_5_0", flag, 0, &pSpriteBatchPixelShaderBlob, &pErrorBlob);
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
+			OutputDebugStringA(error);
+			pErrorBlob->Release();
+			pErrorBlob = nullptr;
+		}
+		else
+		{
+			OutputDebugStringW(L"Sprite batch pixel shader compile failed, but no error blob was returned: ");
+			OutputDebugStringW(wszCurrentDir);
+			OutputDebugStringW(L"\n");
+		}
+		__debugbreak();
+	}
+	if (S_OK != m_pDevice->CreatePixelShader(pSpriteBatchPixelShaderBlob->GetBufferPointer(), pSpriteBatchPixelShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pSpriteBatchPixelShader))
+		__debugbreak();
+
+	char* szGlyphVertexMainName = new char[256];
+	memcpy_s(szGlyphVertexMainName, 256, szFileName, len);
+	memcpy_s(szGlyphVertexMainName + len, 256 - len, "_GlyphVS", sizeof("_GlyphVS"));
+
+	ID3DBlob* pGlyphBatchVertexShaderBlob = nullptr;
+	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szGlyphVertexMainName, "vs_5_0", flag, 0, &pGlyphBatchVertexShaderBlob, &pErrorBlob);
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
+			OutputDebugStringA(error);
+			pErrorBlob->Release();
+			pErrorBlob = nullptr;
+		}
+		else
+		{
+			OutputDebugStringW(L"Glyph batch vertex shader compile failed, but no error blob was returned: ");
+			OutputDebugStringW(wszCurrentDir);
+			OutputDebugStringW(L"\n");
+		}
+		__debugbreak();
+	}
+	if (S_OK != m_pDevice->CreateVertexShader(pGlyphBatchVertexShaderBlob->GetBufferPointer(), pGlyphBatchVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pGlyphBatchVertexShader))
+		__debugbreak();
+
+	char* szGlyphPixelMainName = new char[256];
+	memcpy_s(szGlyphPixelMainName, 256, szFileName, len);
+	memcpy_s(szGlyphPixelMainName + len, 256 - len, "_GlyphPS", sizeof("_GlyphPS"));
+
+	ID3DBlob* pGlyphBatchPixelShaderBlob = nullptr;
+	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szGlyphPixelMainName, "ps_5_0", flag, 0, &pGlyphBatchPixelShaderBlob, &pErrorBlob);
+	if (FAILED(hr))
+	{
+		if (pErrorBlob)
+		{
+			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
+			OutputDebugStringA(error);
+			pErrorBlob->Release();
+			pErrorBlob = nullptr;
+		}
+		else
+		{
+			OutputDebugStringW(L"Glyph batch pixel shader compile failed, but no error blob was returned: ");
+			OutputDebugStringW(wszCurrentDir);
+			OutputDebugStringW(L"\n");
+		}
+		__debugbreak();
+	}
+	if (S_OK != m_pDevice->CreatePixelShader(pGlyphBatchPixelShaderBlob->GetBufferPointer(), pGlyphBatchPixelShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pGlyphBatchPixelShader))
+		__debugbreak();
+
 	szMainName[len + 1] = 'P';
 	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szMainName, "ps_5_0", flag, 0, &pPixelShaderBlob, &pErrorBlob);
 	if (FAILED(hr))
@@ -532,8 +950,18 @@ void Renderer::LoadPipelineShader(const WCHAR* shaderFile)
 		__debugbreak();
 
 	m_pVertexShaderBlob = pVertexShaderBlob;
+	m_pGridVertexShaderBlob = pGridVertexShaderBlob;
+	m_pSpriteBatchVertexShaderBlob = pSpriteBatchVertexShaderBlob;
+	m_pGlyphBatchVertexShaderBlob = pGlyphBatchVertexShaderBlob;
 
+	pGlyphBatchPixelShaderBlob->Release();
+	pSpriteBatchPixelShaderBlob->Release();
 	pPixelShaderBlob->Release();
+	delete[] szGlyphPixelMainName;
+	delete[] szGlyphVertexMainName;
+	delete[] szBatchPixelMainName;
+	delete[] szBatchVertexMainName;
+	delete[] szGridMainName;
 	delete[] szMainName;
 	delete[] szFileName;
 	delete[] wszCurrentDir;
@@ -541,11 +969,12 @@ void Renderer::LoadPipelineShader(const WCHAR* shaderFile)
 
 void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 {
-	if (desc.textureFile == nullptr || desc.tiles == nullptr || desc.width <= 0 || desc.height <= 0)
+	if (desc.textureFile == nullptr || desc.tiles == nullptr || desc.width <= 0 || desc.height <= 0 || desc.tileSize <= 0.0f)
 		return;
 
 	ID3D11ShaderResourceView* texture = GetTexture(desc.textureFile);
-	if (m_pipeline.pVertexShader == nullptr || m_pipeline.pPixelShader == nullptr || texture == nullptr)
+	if (m_pipeline.pGridVertexShader == nullptr || m_pipeline.pGridInputLayout == nullptr ||
+		m_pipeline.pPixelShader == nullptr || texture == nullptr)
 		return;
 
 	const int atlasColumns = desc.atlasColumns > 0 ? desc.atlasColumns : 1;
@@ -558,90 +987,180 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 	const float maxVisibleX = m_viewHalfWidth + halfTile;
 	const float minVisibleY = -m_viewHalfHeight - halfTile;
 	const float maxVisibleY = m_viewHalfHeight + halfTile;
+	const int startX = (std::max)(0, static_cast<int>(std::floor((minVisibleX - desc.originX) / desc.tileSize)));
+	const int endX = (std::min)(desc.width - 1, static_cast<int>(std::ceil((maxVisibleX - desc.originX) / desc.tileSize)));
+	const int startY = (std::max)(0, static_cast<int>(std::floor((desc.originY - maxVisibleY) / desc.tileSize)));
+	const int endY = (std::min)(desc.height - 1, static_cast<int>(std::ceil((desc.originY - minVisibleY) / desc.tileSize)));
+	if (startX > endX || startY > endY)
+		return;
 
-	m_gridVertices.clear();
-	m_gridIndices.clear();
-	m_gridVertices.reserve(desc.width * desc.height * VerticesPerQuad);
-	m_gridIndices.reserve(desc.width * desc.height * IndicesPerQuad);
+	FlushSpriteBatch();
 
-	for (int y = 0; y < desc.height; ++y)
+	m_gridInstances.clear();
+	XMMATRIX gridWorld = XMMatrixIdentity();
+	const bool useChunkCache = desc.chunkVersions != nullptr && desc.chunkSizeTiles > 0;
+	size_t instanceCount = 0;
+	bool gridBufferUploaded = false;
+
+	if (useChunkCache)
 	{
-		for (int x = 0; x < desc.width; ++x)
+		const int chunkSize = (std::max)(1, desc.chunkSizeTiles);
+		const int chunkColumns = desc.chunkColumns > 0 ? desc.chunkColumns : (desc.width + chunkSize - 1) / chunkSize;
+		const int chunkRows = desc.chunkRows > 0 ? desc.chunkRows : (desc.height + chunkSize - 1) / chunkSize;
+		const bool cacheMismatch =
+			m_gridCache.tiles != desc.tiles ||
+			m_gridCache.width != desc.width ||
+			m_gridCache.height != desc.height ||
+			m_gridCache.atlasColumns != atlasColumns ||
+			m_gridCache.atlasRows != atlasRows ||
+			m_gridCache.chunkSizeTiles != chunkSize ||
+			m_gridCache.chunkColumns != chunkColumns ||
+			m_gridCache.chunkRows != chunkRows ||
+			m_gridCache.gridVersion != desc.gridVersion ||
+			m_gridCache.tileSize != desc.tileSize;
+
+		if (cacheMismatch)
 		{
-			const BlockTile& tile = desc.tiles[y * desc.width + x];
-			if (!tile.visible)
-				continue;
+			m_gridCache.tiles = desc.tiles;
+			m_gridCache.width = desc.width;
+			m_gridCache.height = desc.height;
+			m_gridCache.atlasColumns = atlasColumns;
+			m_gridCache.atlasRows = atlasRows;
+			m_gridCache.chunkSizeTiles = chunkSize;
+			m_gridCache.chunkColumns = chunkColumns;
+			m_gridCache.chunkRows = chunkRows;
+			m_gridCache.gridVersion = desc.gridVersion;
+			m_gridCache.tileSize = desc.tileSize;
+			m_gridCache.chunks.assign(static_cast<size_t>(chunkColumns * chunkRows), GridChunkCache());
+		}
 
-			const float centerX = desc.originX + x * desc.tileSize;
-			const float centerY = desc.originY - y * desc.tileSize;
-			if (centerX < minVisibleX || centerX > maxVisibleX || centerY < minVisibleY || centerY > maxVisibleY)
-				continue;
+		const int minChunkX = std::clamp(startX / chunkSize, 0, chunkColumns - 1);
+		const int maxChunkX = std::clamp(endX / chunkSize, 0, chunkColumns - 1);
+		const int minChunkY = std::clamp(startY / chunkSize, 0, chunkRows - 1);
+		const int maxChunkY = std::clamp(endY / chunkSize, 0, chunkRows - 1);
+		instanceCount = 0;
 
-			if (m_gridVertices.size() + VerticesPerQuad > 0xFFFF)
-				break;
+		for (int chunkY = minChunkY; chunkY <= maxChunkY; ++chunkY)
+		{
+			for (int chunkX = minChunkX; chunkX <= maxChunkX; ++chunkX)
+			{
+				const int chunkIndex = chunkY * chunkColumns + chunkX;
+				GridChunkCache& chunk = m_gridCache.chunks[chunkIndex];
+				const unsigned int version = desc.chunkVersions[chunkIndex];
+				if (!chunk.valid || chunk.version != version)
+				{
+					RebuildGridChunk(desc, chunk, chunkX, chunkY, chunkSize, atlasColumns, atlasRows, tileCount, uvWidth, uvHeight);
+					chunk.version = version;
+					++m_currentFrameStats.gridChunksRebuilt;
+				}
 
-			int tileIndex = tile.tileIndex;
-			if (tileCount > 0)
-				tileIndex = tileIndex % tileCount;
+				instanceCount += chunk.instances.size();
+				++m_currentFrameStats.gridChunksDrawn;
+			}
+		}
 
-			const int tileX = tileIndex % atlasColumns;
-			const int tileY = tileIndex / atlasColumns;
-			const float u0 = tileX * uvWidth;
-			const float v0 = tileY * uvHeight;
-			const float u1 = u0 + uvWidth;
-			const float v1 = v0 + uvHeight;
-			const float left = centerX - halfTile;
-			const float right = centerX + halfTile;
-			const float top = centerY + halfTile;
-			const float bottom = centerY - halfTile;
-			const USHORT baseVertex = static_cast<USHORT>(m_gridVertices.size());
+		if (instanceCount == 0)
+			return;
 
-			m_gridVertices.push_back({ math::Vec4(left, top, 0.0f, 1.0f), math::Vec2(u0, v0) });
-			m_gridVertices.push_back({ math::Vec4(right, top, 0.0f, 1.0f), math::Vec2(u1, v0) });
-			m_gridVertices.push_back({ math::Vec4(right, bottom, 0.0f, 1.0f), math::Vec2(u1, v1) });
-			m_gridVertices.push_back({ math::Vec4(left, bottom, 0.0f, 1.0f), math::Vec2(u0, v1) });
+		EnsureGridBatchCapacity(instanceCount);
+		D3D11_MAPPED_SUBRESOURCE instanceResource;
+		if (S_OK != m_pDeviceContext->Map(m_pipeline.pGridInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
+			__debugbreak();
 
-			m_gridIndices.push_back(baseVertex);
-			m_gridIndices.push_back(baseVertex + 1);
-			m_gridIndices.push_back(baseVertex + 2);
-			m_gridIndices.push_back(baseVertex);
-			m_gridIndices.push_back(baseVertex + 2);
-			m_gridIndices.push_back(baseVertex + 3);
+		GridInstance* writeCursor = static_cast<GridInstance*>(instanceResource.pData);
+		size_t copiedInstances = 0;
+		for (int chunkY = minChunkY; chunkY <= maxChunkY; ++chunkY)
+		{
+			for (int chunkX = minChunkX; chunkX <= maxChunkX; ++chunkX)
+			{
+				const int chunkIndex = chunkY * chunkColumns + chunkX;
+				const std::vector<GridInstance>& instances = m_gridCache.chunks[chunkIndex].instances;
+				if (instances.empty())
+					continue;
+
+				memcpy_s(writeCursor + copiedInstances,
+					(m_gridQuadCapacity - copiedInstances) * sizeof(GridInstance),
+					instances.data(),
+					instances.size() * sizeof(GridInstance));
+				copiedInstances += instances.size();
+			}
+		}
+		m_pDeviceContext->Unmap(m_pipeline.pGridInstanceBuffer, 0);
+
+		gridBufferUploaded = true;
+		gridWorld = XMMatrixTranslation(desc.originX, desc.originY, 0.0f);
+	}
+	else
+	{
+		const int visibleTileCapacity = (endX - startX + 1) * (endY - startY + 1);
+		m_gridInstances.reserve(visibleTileCapacity);
+
+		for (int y = startY; y <= endY; ++y)
+		{
+			const BlockTile* row = desc.tiles + y * desc.width;
+			for (int x = startX; x <= endX; ++x)
+			{
+				const BlockTile& tile = row[x];
+				if (!tile.visible)
+					continue;
+
+				const float centerX = desc.originX + x * desc.tileSize;
+				const float centerY = desc.originY - y * desc.tileSize;
+
+				int tileIndex = tile.tileIndex;
+				if (tileCount > 0)
+					tileIndex = tileIndex % tileCount;
+
+				const int tileX = tileIndex % atlasColumns;
+				const int tileY = tileIndex / atlasColumns;
+				const float u0 = tileX * uvWidth;
+				const float v0 = tileY * uvHeight;
+				m_gridInstances.push_back({ math::Vec4(centerX, centerY, desc.tileSize, 0.0f), math::Vec4(u0, v0, uvWidth, uvHeight) });
+			}
 		}
 	}
 
-	if (m_gridIndices.empty())
-		return;
+	if (!gridBufferUploaded)
+	{
+		if (m_gridInstances.empty())
+			return;
 
-	const size_t quadCount = m_gridVertices.size() / VerticesPerQuad;
-	EnsureGridBatchCapacity(quadCount);
+		instanceCount = m_gridInstances.size();
+		EnsureGridBatchCapacity(instanceCount);
 
-	D3D11_MAPPED_SUBRESOURCE vertexResource;
-	if (S_OK != m_pDeviceContext->Map(m_pipeline.pGridVertexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &vertexResource))
-		__debugbreak();
-	memcpy_s(vertexResource.pData, m_gridQuadCapacity * VerticesPerQuad * sizeof(SimpleVertex),
-		m_gridVertices.data(), m_gridVertices.size() * sizeof(SimpleVertex));
-	m_pDeviceContext->Unmap(m_pipeline.pGridVertexBuffer, 0);
+		D3D11_MAPPED_SUBRESOURCE instanceResource;
+		if (S_OK != m_pDeviceContext->Map(m_pipeline.pGridInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
+			__debugbreak();
+		memcpy_s(instanceResource.pData, m_gridQuadCapacity * sizeof(GridInstance),
+			m_gridInstances.data(), m_gridInstances.size() * sizeof(GridInstance));
+		m_pDeviceContext->Unmap(m_pipeline.pGridInstanceBuffer, 0);
+	}
 
-	D3D11_MAPPED_SUBRESOURCE indexResource;
-	if (S_OK != m_pDeviceContext->Map(m_pipeline.pGridIndexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &indexResource))
-		__debugbreak();
-	memcpy_s(indexResource.pData, m_gridQuadCapacity * IndicesPerQuad * sizeof(USHORT),
-		m_gridIndices.data(), m_gridIndices.size() * sizeof(USHORT));
-	m_pDeviceContext->Unmap(m_pipeline.pGridIndexBuffer, 0);
+	ID3D11Buffer* vertexBuffers[] = { m_pipeline.pQuadVertexBuffer, m_pipeline.pGridInstanceBuffer };
+	UINT strides[] = { sizeof(SimpleVertex), sizeof(GridInstance) };
+	UINT offsets[] = { 0, 0 };
 
-	UINT stride = sizeof(SimpleVertex);
-	UINT offset = 0;
-	BindSpritePipeline();
+	m_spritePipelineBound = false;
+	m_pDeviceContext->IASetInputLayout(m_pipeline.pGridInputLayout);
+	m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_pDeviceContext->VSSetShader(m_pipeline.pGridVertexShader, nullptr, 0);
+	m_pDeviceContext->PSSetShader(m_pipeline.pPixelShader, nullptr, 0);
+	m_pDeviceContext->PSSetSamplers(0, 1, &m_pipeline.pSampler);
+	m_pDeviceContext->RSSetState(m_pipeline.pRasterizer);
+	m_pDeviceContext->OMSetBlendState(m_pipeline.pBlendState, nullptr, 0xFFFFFFFF);
+	m_pDeviceContext->OMSetDepthStencilState(m_pipeline.pDepthStencilState, 0);
 	BindTexture(texture);
-	m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pipeline.pGridVertexBuffer, &stride, &offset);
-	m_pDeviceContext->IASetIndexBuffer(m_pipeline.pGridIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+	m_pDeviceContext->IASetVertexBuffers(0, 2, vertexBuffers, strides, offsets);
+	m_pDeviceContext->IASetIndexBuffer(m_pipeline.pQuadIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
 
-	SpriteTransformData transformData{ XMMatrixIdentity(), m_matView, m_matProjection };
+	SpriteTransformData transformData{ gridWorld, m_matView, m_matProjection };
 	SpriteData spriteData;
 	d3d::BindVertexConstantBuffer(m_pDeviceContext, m_pipeline.pTransformConstantBuffer, &transformData, sizeof(SpriteTransformData), 0);
 	d3d::BindPixelConstantBuffer(m_pDeviceContext, m_pipeline.pSpriteConstantBuffer, &spriteData, sizeof(SpriteData), 0);
-	m_pDeviceContext->DrawIndexed(static_cast<UINT>(m_gridIndices.size()), 0, 0);
+	m_pDeviceContext->DrawIndexedInstanced(6, static_cast<UINT>(instanceCount), 0, 0, 0);
+	++m_currentFrameStats.drawCalls;
+	++m_currentFrameStats.gridDrawCalls;
+	m_currentFrameStats.gridInstances += static_cast<unsigned int>(instanceCount);
 }
 
 void Renderer::DrawSprite(const SpriteDesc& desc)
@@ -657,6 +1176,8 @@ void Renderer::DrawRectOutline(const RectOutlineDesc& desc)
 {
 	if (m_pipeline.pWhiteTexture == nullptr || desc.width <= 0.0f || desc.height <= 0.0f || desc.thickness <= 0.0f)
 		return;
+
+	++m_currentFrameStats.rectOutlineCalls;
 
 	float thickness = desc.thickness;
 	if (thickness > desc.width)
@@ -699,49 +1220,37 @@ void Renderer::DrawRectOutline(const RectOutlineDesc& desc)
 	DrawSpriteQuad(lineDesc, m_pipeline.pWhiteTexture);
 }
 
+void Renderer::DrawGlyphSprite(const GlyphSpriteDesc& desc)
+{
+	if (desc.width <= 0.0f || desc.height <= 0.0f)
+		return;
+
+	GlyphBatchInstance instance;
+	instance.transform = { desc.positionX, desc.positionY, desc.width, desc.height };
+	instance.rows0 = {
+		static_cast<float>(desc.rows[0]),
+		static_cast<float>(desc.rows[1]),
+		static_cast<float>(desc.rows[2]),
+		static_cast<float>(desc.rows[3]) };
+	instance.rows1Depth = {
+		static_cast<float>(desc.rows[4]),
+		static_cast<float>(desc.rows[5]),
+		static_cast<float>(desc.rows[6]),
+		desc.depth };
+	instance.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
+	m_glyphBatchInstances.push_back(instance);
+}
+
 void Renderer::DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* texture)
 {
 	if (m_pipeline.pVertexShader == nullptr || m_pipeline.pPixelShader == nullptr || texture == nullptr)
 		return;
 
-	UINT stride = sizeof(SimpleVertex);
-	UINT offset = 0;
-	BindSpritePipeline();
-	m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pipeline.pQuadVertexBuffer, &stride, &offset);
-	m_pDeviceContext->IASetIndexBuffer(m_pipeline.pQuadIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
-	BindTexture(texture);
+	QueueSprite(texture, desc);
+}
 
-	int atlasColumns = desc.atlasColumns > 0 ? desc.atlasColumns : 1;
-	int atlasRows = desc.atlasRows > 0 ? desc.atlasRows : 1;
-	int tileCount = atlasColumns * atlasRows;
-	int tileIndex = desc.tileIndex;
-	if (tileIndex < 0)
-		tileIndex = 0;
-	if (tileCount > 0)
-		tileIndex = tileIndex % tileCount;
-
-	const int tileX = tileIndex % atlasColumns;
-	const int tileY = tileIndex / atlasColumns;
-	const float uvWidth = 1.0f / atlasColumns;
-	const float uvHeight = 1.0f / atlasRows;
-
-	SpriteData spriteData;
-	spriteData.ratio = { uvWidth, uvHeight };
-	spriteData.offset = { tileX * uvWidth, tileY * uvHeight };
-	spriteData.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
-	if (desc.flipX)
-	{
-		spriteData.ratio.x = -uvWidth;
-		spriteData.offset.x = (tileX + 1) * uvWidth;
-	}
-
-	XMMATRIX world = XMMatrixScaling(desc.width, desc.height, 1.0f) *
-		XMMatrixRotationZ(desc.rotationRadians) *
-		XMMatrixTranslation(desc.positionX, desc.positionY, desc.depth);
-
-	SpriteTransformData transformData{ world, m_matView, m_matProjection };
-	d3d::BindVertexConstantBuffer(m_pDeviceContext, m_pipeline.pTransformConstantBuffer, &transformData, sizeof(SpriteTransformData), 0);
-	d3d::BindPixelConstantBuffer(m_pDeviceContext, m_pipeline.pSpriteConstantBuffer, &spriteData, sizeof(SpriteData), 0);
-	m_pDeviceContext->DrawIndexed(6, 0, 0);
+void Renderer::GetLastFrameStats(RenderFrameStats& outStats) const
+{
+	outStats = m_lastFrameStats;
 }
 

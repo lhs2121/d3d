@@ -156,10 +156,26 @@ void Window::Initialize(const char* szTitle, float posX, float posY, float width
 	UpdateWindow(m_hWnd);
 }
 
+int Window::ConsumeMouseWheelDelta()
+{
+	const int delta = m_mouseWheelDelta;
+	m_mouseWheelDelta = 0;
+	return delta;
+}
+
 LRESULT CALLBACK Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
 	{
+	case WM_MOUSEWHEEL:
+	{
+		if (g_window)
+		{
+			g_window->m_mouseWheelDelta += GET_WHEEL_DELTA_WPARAM(wParam);
+			return 0;
+		}
+		break;
+	}
 	case WM_SETCURSOR:
 	{
 		if (g_window && g_window->m_hCursor && LOWORD(lParam) == HTCLIENT)

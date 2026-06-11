@@ -8,22 +8,79 @@
 
 using namespace DirectX;
 
+struct GridInstance
+{
+	math::Vec4 transform;
+	math::Vec4 uv;
+};
+
+struct GridChunkCache
+{
+	std::vector<GridInstance> instances;
+	unsigned int version = 0;
+	int startX = 0;
+	int startY = 0;
+	int endX = -1;
+	int endY = -1;
+	bool valid = false;
+};
+
+struct GridCacheState
+{
+	const BlockTile* tiles = nullptr;
+	int width = 0;
+	int height = 0;
+	int atlasColumns = 0;
+	int atlasRows = 0;
+	int chunkSizeTiles = 0;
+	int chunkColumns = 0;
+	int chunkRows = 0;
+	unsigned int gridVersion = 0;
+	float tileSize = 0.0f;
+	std::vector<GridChunkCache> chunks;
+};
+
+struct SpriteBatchInstance
+{
+	math::Vec4 transform;
+	math::Vec4 rotationDepth;
+	math::Vec4 uv;
+	math::Vec4 color;
+};
+
+struct GlyphBatchInstance
+{
+	math::Vec4 transform;
+	math::Vec4 rows0;
+	math::Vec4 rows1Depth;
+	math::Vec4 color;
+};
+
 struct RenderPipeline
 {
 	ID3D11Buffer* pQuadVertexBuffer = nullptr;
 	ID3D11Buffer* pQuadIndexBuffer = nullptr;
 	ID3D11InputLayout* pInputLayout = nullptr;
+	ID3D11InputLayout* pGridInputLayout = nullptr;
+	ID3D11InputLayout* pSpriteBatchInputLayout = nullptr;
+	ID3D11InputLayout* pGlyphBatchInputLayout = nullptr;
 	ID3D11SamplerState* pSampler = nullptr;
 	ID3D11RasterizerState* pRasterizer = nullptr;
 	ID3D11DepthStencilState* pDepthStencilState = nullptr;
 	ID3D11BlendState* pBlendState = nullptr;
 	ID3D11VertexShader* pVertexShader = nullptr;
+	ID3D11VertexShader* pGridVertexShader = nullptr;
+	ID3D11VertexShader* pSpriteBatchVertexShader = nullptr;
+	ID3D11VertexShader* pGlyphBatchVertexShader = nullptr;
 	ID3D11PixelShader* pPixelShader = nullptr;
+	ID3D11PixelShader* pSpriteBatchPixelShader = nullptr;
+	ID3D11PixelShader* pGlyphBatchPixelShader = nullptr;
 	ID3D11ShaderResourceView* pTexture = nullptr;
 	ID3D11Buffer* pTransformConstantBuffer = nullptr;
 	ID3D11Buffer* pSpriteConstantBuffer = nullptr;
-	ID3D11Buffer* pGridVertexBuffer = nullptr;
-	ID3D11Buffer* pGridIndexBuffer = nullptr;
+	ID3D11Buffer* pGridInstanceBuffer = nullptr;
+	ID3D11Buffer* pSpriteBatchInstanceBuffer = nullptr;
+	ID3D11Buffer* pGlyphBatchInstanceBuffer = nullptr;
 	ID3D11ShaderResourceView* pWhiteTexture = nullptr;
 };
 
@@ -39,6 +96,8 @@ public:
 	void DrawBlockGrid(const BlockGridDesc& desc) override;
 	void DrawSprite(const SpriteDesc& desc) override;
 	void DrawRectOutline(const RectOutlineDesc& desc) override;
+	void DrawGlyphSprite(const GlyphSpriteDesc& desc) override;
+	void GetLastFrameStats(RenderFrameStats& outStats) const override;
 
 private:
 	void InitializePipeline();
@@ -50,6 +109,14 @@ private:
 	void BindSpritePipeline();
 	void BindTexture(ID3D11ShaderResourceView* texture);
 	void EnsureGridBatchCapacity(size_t quadCount);
+	void EnsureSpriteBatchCapacity(size_t quadCount);
+	void EnsureGlyphBatchCapacity(size_t quadCount);
+	void ResetGridCache();
+	void RebuildGridChunk(const BlockGridDesc& desc, GridChunkCache& chunk, int chunkX, int chunkY,
+		int chunkSize, int atlasColumns, int atlasRows, int tileCount, float uvWidth, float uvHeight);
+	void QueueSprite(ID3D11ShaderResourceView* texture, const SpriteDesc& desc);
+	void FlushSpriteBatch();
+	void FlushGlyphBatch();
 	void DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* texture);
 
 	ID3D11Device* m_pDevice = nullptr;
@@ -60,13 +127,23 @@ private:
 	ID3D11DepthStencilView* m_pDepthStencilView = nullptr;
 	ID3D11RenderTargetView* m_pRenderTargetView = nullptr;
 	ID3DBlob* m_pVertexShaderBlob = nullptr;
+	ID3DBlob* m_pGridVertexShaderBlob = nullptr;
+	ID3DBlob* m_pSpriteBatchVertexShaderBlob = nullptr;
+	ID3DBlob* m_pGlyphBatchVertexShaderBlob = nullptr;
 	RenderPipeline m_pipeline;
 	std::unordered_map<std::wstring, ID3D11ShaderResourceView*> m_textureMap;
-	std::vector<SimpleVertex> m_gridVertices;
-	std::vector<USHORT> m_gridIndices;
+	std::vector<GridInstance> m_gridInstances;
+	GridCacheState m_gridCache;
+	std::vector<SpriteBatchInstance> m_spriteBatchInstances;
+	std::vector<GlyphBatchInstance> m_glyphBatchInstances;
+	RenderFrameStats m_currentFrameStats;
+	RenderFrameStats m_lastFrameStats;
 	ID3D11ShaderResourceView* m_boundTexture = nullptr;
+	ID3D11ShaderResourceView* m_spriteBatchTexture = nullptr;
 	bool m_spritePipelineBound = false;
 	size_t m_gridQuadCapacity = 0;
+	size_t m_spriteBatchQuadCapacity = 0;
+	size_t m_glyphBatchQuadCapacity = 0;
 	float m_viewHalfWidth = 1.0f;
 	float m_viewHalfHeight = 1.0f;
 
