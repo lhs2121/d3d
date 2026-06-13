@@ -56,6 +56,13 @@ struct GlyphBatchInstance
 	math::Vec4 color;
 };
 
+struct FontGlyph
+{
+	int tileIndex = 0;
+	float widthPixels = 0.0f;
+	float advancePixels = 0.0f;
+};
+
 struct RenderPipeline
 {
 	ID3D11Buffer* pQuadVertexBuffer = nullptr;
@@ -89,21 +96,30 @@ class Renderer : public IRenderer
 public:
 	~Renderer();
 	void Initialize(UINT winWidth, UINT winHeight, HWND& hwnd) override;
+	void Resize(UINT winWidth, UINT winHeight) override;
 	void BeginFrame() override;
 	void EndFrame() override;
+	void SetViewportRect(float left, float top, float width, float height) override;
+	void ResetViewportRect() override;
 
 	void LoadTexture(const WCHAR* textureFile) override;
 	void DrawBlockGrid(const BlockGridDesc& desc) override;
 	void DrawSprite(const SpriteDesc& desc) override;
 	void DrawRectOutline(const RectOutlineDesc& desc) override;
 	void DrawGlyphSprite(const GlyphSpriteDesc& desc) override;
+	void DrawText(const TextDesc& desc) override;
 	void GetLastFrameStats(RenderFrameStats& outStats) const override;
 
 private:
 	void InitializePipeline();
 	void ReleasePipeline();
 	void ReleaseTextures();
+	void ReleaseFontAtlas();
 	void CreateWhiteTexture();
+	bool EnsureFontAtlas();
+	bool EnsureFontGlyph(unsigned int codepoint);
+	void UploadFontAtlas();
+	unsigned int DecodeUtf8Codepoint(const char*& cursor) const;
 	void LoadPipelineShader(const WCHAR* shaderFile);
 	ID3D11ShaderResourceView* GetTexture(const WCHAR* textureFile);
 	void BindSpritePipeline();
@@ -136,14 +152,35 @@ private:
 	GridCacheState m_gridCache;
 	std::vector<SpriteBatchInstance> m_spriteBatchInstances;
 	std::vector<GlyphBatchInstance> m_glyphBatchInstances;
+	std::unordered_map<unsigned int, FontGlyph> m_fontGlyphs;
+	std::vector<unsigned int> m_fontAtlasPixels;
 	RenderFrameStats m_currentFrameStats;
 	RenderFrameStats m_lastFrameStats;
 	ID3D11ShaderResourceView* m_boundTexture = nullptr;
 	ID3D11ShaderResourceView* m_spriteBatchTexture = nullptr;
+	ID3D11Texture2D* m_fontAtlasTexture = nullptr;
+	ID3D11ShaderResourceView* m_fontAtlasView = nullptr;
+	HFONT m_fontHandle = nullptr;
+	HDC m_fontDc = nullptr;
+	HBITMAP m_fontBitmap = nullptr;
+	void* m_fontBitmapPixels = nullptr;
 	bool m_spritePipelineBound = false;
+	bool m_fontAtlasReady = false;
+	bool m_fontAtlasDirty = false;
 	size_t m_gridQuadCapacity = 0;
 	size_t m_spriteBatchQuadCapacity = 0;
 	size_t m_glyphBatchQuadCapacity = 0;
+	int m_fontAtlasWidth = 1024;
+	int m_fontAtlasHeight = 1024;
+	int m_fontAtlasCellWidth = 48;
+	int m_fontAtlasCellHeight = 48;
+	int m_fontAtlasColumns = 0;
+	int m_fontAtlasRows = 0;
+	int m_fontGlyphCount = 0;
+	int m_fontPadding = 4;
+	float m_fontAsciiWidth = 27.0f;
+	UINT m_windowWidth = 1;
+	UINT m_windowHeight = 1;
 	float m_viewHalfWidth = 1.0f;
 	float m_viewHalfHeight = 1.0f;
 

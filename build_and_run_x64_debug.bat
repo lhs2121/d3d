@@ -30,7 +30,7 @@ if not exist "%GAME_EXE%" (
 )
 
 pushd "%ROOT%" >nul
-start "" "%GAME_EXE%"
+start "" "%GAME_EXE%" %*
 popd >nul
 exit /b 0
 

@@ -74,7 +74,7 @@ ID3D11RasterizerState* d3d::CreateRasterizerState(ID3D11Device* pDevice)
 	desc.DepthBiasClamp = 0;
 	desc.SlopeScaledDepthBias = 0;
 	desc.DepthClipEnable = true;
-	desc.ScissorEnable = false;
+	desc.ScissorEnable = true;
 	desc.MultisampleEnable = true;
 	desc.AntialiasedLineEnable = false;
 

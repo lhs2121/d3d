@@ -80,6 +80,19 @@ struct GlyphSpriteDesc
 	float depth = -8.0f;
 };
 
+struct TextDesc
+{
+	const char* text = nullptr;
+	float x = 0.0f;
+	float y = 0.0f;
+	float pixelSize = 2.0f;
+	float colorR = 1.0f;
+	float colorG = 1.0f;
+	float colorB = 1.0f;
+	float colorA = 1.0f;
+	float depth = -8.0f;
+};
+
 struct RenderFrameStats
 {
 	unsigned int drawCalls = 0;
@@ -96,15 +109,19 @@ struct RenderFrameStats
 struct IRenderer
 {
 	virtual void Initialize(UINT winSizeX, UINT winSizeY, HWND& hwnd) = 0;
+	virtual void Resize(UINT winSizeX, UINT winSizeY) = 0;
 
 	virtual void BeginFrame() = 0;
 	virtual void EndFrame() = 0;
+	virtual void SetViewportRect(float left, float top, float width, float height) = 0;
+	virtual void ResetViewportRect() = 0;
 
 	virtual void LoadTexture(const WCHAR* textureFile) = 0;
 	virtual void DrawBlockGrid(const BlockGridDesc& desc) = 0;
 	virtual void DrawSprite(const SpriteDesc& desc) = 0;
 	virtual void DrawRectOutline(const RectOutlineDesc& desc) = 0;
 	virtual void DrawGlyphSprite(const GlyphSpriteDesc& desc) = 0;
+	virtual void DrawText(const TextDesc& desc) = 0;
 	virtual void GetLastFrameStats(RenderFrameStats& outStats) const = 0;
 };
 

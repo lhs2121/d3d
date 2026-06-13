@@ -3,26 +3,44 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <mmsystem.h>
 #include <random>
+#include <string>
 
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 namespace
 {
 	constexpr int KeyA = 0x41;
-	constexpr int KeyC = 0x43;
 	constexpr int KeyD = 0x44;
-	constexpr int KeyStats = 0x45;
 	constexpr int KeyS = 0x53;
 	constexpr int KeyJump = VK_SPACE;
-	constexpr int KeyDebugStats = VK_F1;
-	constexpr int KeyFrameLimit = VK_F2;
-	constexpr int KeyRevealMap = VK_F3;
 	constexpr int KeyMinimap = VK_TAB;
 	constexpr float BlockBreakDuration = 0.85f;
 	constexpr float InteractionRangeTiles = 6.0f;
+	constexpr unsigned int NetworkMagic = 0x4433444Du;
+	constexpr unsigned char NetworkVersion = 1;
+	constexpr float NetworkPlayerSendInterval = 1.0f / 30.0f;
+	constexpr float NetworkItemSendInterval = 0.12f;
+	constexpr float NetworkHelloInterval = 0.25f;
+	constexpr float NetworkRemoteTimeout = 5.0f;
+	constexpr float NetworkBlockBreakRemoteTimeout = 0.35f;
+	constexpr int NetworkMaxPeers = 8;
+	constexpr int MultiplayerActionNone = 0;
+	constexpr int MultiplayerActionHost = 1;
+	constexpr int MultiplayerActionJoin = 2;
+	constexpr int MultiplayerActionInput = 3;
+	constexpr int MultiplayerActionClose = 4;
+	constexpr int MultiplayerActionCopyIp = 5;
+	constexpr int StartMenuActionSingle = 11;
+	constexpr int StartMenuActionHost = 12;
+	constexpr int StartMenuActionJoin = 13;
+	constexpr int StartMenuActionInput = 14;
+	constexpr int StartMenuActionStart = 15;
 	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\block_atlas_extended.png";
 	constexpr int BlockAtlasColumns = 16;
 	constexpr int BlockAtlasRows = 1;
@@ -34,6 +52,159 @@ namespace
 		float parallaxY = 0.0f;
 		float depth = 5.0f;
 	};
+
+	enum class NetworkPacketType : unsigned char
+	{
+		Hello = 1,
+		Welcome = 2,
+		PlayerState = 3,
+		TileEdit = 4,
+		BlockBreak = 5,
+		LeafEffect = 6,
+		DroppedItem = 7,
+	};
+
+#pragma pack(push, 1)
+	struct NetworkPacketHeader
+	{
+		unsigned int magic = NetworkMagic;
+		unsigned char version = NetworkVersion;
+		unsigned char type = 0;
+		unsigned short size = 0;
+	};
+
+	struct NetworkHelloPacket
+	{
+		NetworkPacketHeader header;
+		unsigned int token = 0;
+	};
+
+	struct NetworkWelcomePacket
+	{
+		NetworkPacketHeader header;
+		unsigned int token = 0;
+		int playerId = 0;
+		unsigned int worldSeed = 0;
+		int blockWidth = 0;
+		int blockHeight = 0;
+		float spawnX = 0.0f;
+		float spawnY = 0.0f;
+	};
+
+	struct NetworkPlayerStatePacket
+	{
+		NetworkPacketHeader header;
+		unsigned int sequence = 0;
+		int playerId = 0;
+		float x = 0.0f;
+		float y = 0.0f;
+		float velocityX = 0.0f;
+		float velocityY = 0.0f;
+		float animationTime = 0.0f;
+		float attackTimer = 0.0f;
+		int facing = 1;
+		int health = 100;
+		int selectedInventorySlot = 0;
+		unsigned char onGround = 0;
+	};
+
+	struct NetworkTileEditPacket
+	{
+		NetworkPacketHeader header;
+		unsigned int sequence = 0;
+		int playerId = 0;
+		int tileX = 0;
+		int tileY = 0;
+		unsigned short tileIndex = 0;
+		unsigned char visible = 0;
+	};
+
+	struct NetworkBlockBreakPacket
+	{
+		NetworkPacketHeader header;
+		int playerId = 0;
+		int tileX = 0;
+		int tileY = 0;
+		float progress = 0.0f;
+		unsigned char active = 0;
+	};
+
+	struct NetworkLeafEffectPacket
+	{
+		NetworkPacketHeader header;
+		int playerId = 0;
+		int tileX = 0;
+		int tileY = 0;
+		unsigned int seed = 0;
+	};
+
+	struct NetworkDroppedItemPacket
+	{
+		NetworkPacketHeader header;
+		int playerId = 0;
+		unsigned int networkId = 0;
+		float x = 0.0f;
+		float y = 0.0f;
+		float velocityX = 0.0f;
+		float velocityY = 0.0f;
+		float pickupDelay = 0.0f;
+		unsigned short tileIndex = 0;
+		int amount = 0;
+		int pickupPlayerId = 0;
+		unsigned char alive = 0;
+	};
+#pragma pack(pop)
+
+	NetworkPacketHeader MakeNetworkHeader(NetworkPacketType type, size_t packetSize)
+	{
+		NetworkPacketHeader header;
+		header.magic = NetworkMagic;
+		header.version = NetworkVersion;
+		header.type = static_cast<unsigned char>(type);
+		header.size = static_cast<unsigned short>(packetSize);
+		return header;
+	}
+
+	bool IsHostInputCharacter(char value)
+	{
+		return (value >= '0' && value <= '9') ||
+			(value >= 'A' && value <= 'Z') ||
+			(value >= 'a' && value <= 'z') ||
+			value == '.' ||
+			value == '-';
+	}
+
+	bool CopyTextToClipboard(const char* text)
+	{
+		if (text == nullptr || text[0] == '\0')
+			return false;
+
+		if (!OpenClipboard(nullptr))
+			return false;
+
+		EmptyClipboard();
+		const size_t textLength = std::strlen(text) + 1;
+		HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, textLength);
+		if (memory == nullptr)
+		{
+			CloseClipboard();
+			return false;
+		}
+
+		void* buffer = GlobalLock(memory);
+		if (buffer == nullptr)
+		{
+			GlobalFree(memory);
+			CloseClipboard();
+			return false;
+		}
+
+		memcpy(buffer, text, textLength);
+		GlobalUnlock(memory);
+		SetClipboardData(CF_TEXT, memory);
+		CloseClipboard();
+		return true;
+	}
 	constexpr int BackgroundBiomeCount = 3;
 	constexpr int SurfaceBackgroundLayerCount = 4;
 	constexpr int CaveBackgroundLayerCount = 4;
@@ -150,9 +321,9 @@ namespace
 	EquipmentStats GetEquipmentStatsForSlot(int slot)
 	{
 		if (slot == SlotSword)
-			return { "SWORD", "COMBAT", 28, 0, 1.0f };
+			return { "검", "전투", 28, 0, 1.0f };
 		if (slot == SlotAxe)
-			return { "AXE", "HARVEST", 4, 0, 4.5f };
+			return { "도끼", "채집", 4, 0, 4.5f };
 
 		return {};
 	}
@@ -413,7 +584,7 @@ namespace
 	}
 }
 
-void GameEngine::Start(const char* szTitle, float x, float y, float width, float height, HINSTANCE hInstance)
+void GameEngine::Start(const char* szTitle, float x, float y, float width, float height, HINSTANCE hInstance, const NetworkConfig& networkConfig)
 {
 	m_timerResolutionRaised = timeBeginPeriod(1) == TIMERR_NOERROR;
 
@@ -447,7 +618,15 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 	for (const WCHAR* monsterTexture : MonsterSpriteTextures)
 		m_renderer->LoadTexture(monsterTexture);
 
-	InitializeWorld();
+	m_networkConfig = networkConfig;
+	m_networkMode = NetworkConfig::Mode::SinglePlayer;
+	m_gameStarted = false;
+	m_multiplayerMenuOpen = false;
+	m_startJoinHostEditing = networkConfig.mode == NetworkConfig::Mode::Client;
+	if (networkConfig.mode == NetworkConfig::Mode::Client && networkConfig.host[0] != '\0')
+		std::snprintf(m_multiplayerJoinHost.data(), m_multiplayerJoinHost.size(), "%s", networkConfig.host.data());
+	SetMultiplayerMenuStatus(networkConfig.mode == NetworkConfig::Mode::Host ? "호스트 선택됨" :
+		(networkConfig.mode == NetworkConfig::Mode::Client ? "참가 선택됨" : "모드를 고르고 시작"));
 
 	m_timer->Reset();
 	m_window->RunMessageLoop();
@@ -467,22 +646,52 @@ void GameEngine::Update()
 	if (deltaTime > 0.05f)
 		deltaTime = 0.05f;
 
+	if (m_renderer != nullptr && m_window != nullptr && m_window->GetWidth() > 0.0f && m_window->GetHeight() > 0.0f)
+	{
+		m_renderer->Resize(
+			static_cast<UINT>(m_window->GetWidth()),
+			static_cast<UINT>(m_window->GetHeight()));
+	}
+
 	UpdateFrameStats(deltaTime);
 	m_input->Update();
+	m_acceptInput = IsWindowFocused();
 	m_uiConsumesLeftMouse = false;
-	if (m_input->IsDown(KeyDebugStats, this))
-		m_showRenderStats = !m_showRenderStats;
-	if (m_input->IsDown(KeyFrameLimit, this))
-		ToggleFrameLimiter();
-	if (m_input->IsDown(KeyStats, this))
-		m_showPlayerStats = !m_showPlayerStats;
-	if (m_input->IsDown(KeyMinimap, this))
+
+	if (!m_gameStarted)
+	{
+		if (m_acceptInput)
+			UpdateStartMenu(deltaTime);
+		UpdateNetwork(deltaTime);
+
+		QueryPerformanceCounter(&sectionEnd);
+		cpuStats.inputMs = CounterMilliseconds(sectionStart, sectionEnd);
+		cpuStats.itemsMs = cpuStats.inputMs;
+		sectionStart = sectionEnd;
+
+		m_renderer->BeginFrame();
+		LARGE_INTEGER drawStart = {};
+		LARGE_INTEGER drawEnd = {};
+		QueryPerformanceCounter(&drawStart);
+		DrawStartMenu();
+		QueryPerformanceCounter(&drawEnd);
+		m_renderer->EndFrame();
+
+		QueryPerformanceCounter(&sectionEnd);
+		cpuStats.drawWorldMs = CounterMilliseconds(drawStart, drawEnd);
+		cpuStats.renderMs = CounterMilliseconds(sectionStart, sectionEnd);
+		cpuStats.totalMs = CounterMilliseconds(frameStart, sectionEnd);
+		AccumulateCpuStats(cpuStats);
+		ApplyFrameLimiter(frameStart);
+		return;
+	}
+
+	if (IsKeyDown(KeyMinimap))
 	{
 		m_minimapExpanded = !m_minimapExpanded;
 		m_minimapDirty = true;
 	}
-	if (m_input->IsDown(KeyRevealMap, this))
-		RevealAllMap();
+	PollNetwork();
 
 	QueryPerformanceCounter(&sectionEnd);
 	cpuStats.inputMs = CounterMilliseconds(sectionStart, sectionEnd);
@@ -490,6 +699,7 @@ void GameEngine::Update()
 
 	UpdateInventoryInput();
 	UpdateCrafting(deltaTime);
+	UpdateDebugLogInput();
 	TryPlaceSelectedBlock();
 	UpdateBlockBreaking(deltaTime);
 	UpdatePlayer(deltaTime);
@@ -508,6 +718,7 @@ void GameEngine::Update()
 
 	UpdateDroppedItems(deltaTime);
 	UpdateLeafParticles(deltaTime);
+	UpdateNetwork(deltaTime);
 
 	QueryPerformanceCounter(&sectionEnd);
 	cpuStats.itemsMs = CounterMilliseconds(sectionStart, sectionEnd);
@@ -539,17 +750,21 @@ void GameEngine::InitializeWorld()
 	m_monsters.clear();
 	m_droppedItems.clear();
 	m_leafParticles.clear();
+	m_remoteBlockBreaks.clear();
 	m_monsterQueryScratch.clear();
 	m_monsterOverlapScratch.clear();
 	m_minimapRuns.clear();
 	m_minimapDirty = true;
 	m_debugRevealMap = false;
 	m_minimapExpanded = false;
-	m_showPlayerStats = false;
 	m_cachedMinimapSampleStep = -1;
+	m_networkBreakingBlockIndex = -1;
 	m_worldOriginX = -((m_blockWidth - 1) * m_tileSize) * 0.5f;
 
-	const unsigned int seed = GetTickCount();
+	if (m_worldSeed == 0)
+		m_worldSeed = GetTickCount();
+
+	const unsigned int seed = m_worldSeed;
 	std::mt19937 rng(seed);
 	auto randomInt = [&rng](int minValue, int maxValue)
 	{
@@ -1803,7 +2018,7 @@ void GameEngine::InitializeWorld()
 	m_playerKnockbackCooldownTimer = 0.0f;
 	m_attackCooldown = 0.0f;
 	m_attackTimer = 0.0f;
-	SetStatusText("C NEAR TABLE MAKES TOOLS", 2.6f);
+	SetStatusText("제작창에서 만들 수 있어요", 2.6f);
 
 	const float groundTop = TileTop(spawnSurfaceY);
 	m_player.x = m_worldOriginX + spawnX * m_tileSize;
@@ -1818,6 +2033,23 @@ void GameEngine::InitializeWorld()
 	m_cameraX = m_player.x;
 	m_cameraY = m_player.y;
 	UpdateMapReveal();
+	if (!m_pendingNetworkTileEdits.empty())
+	{
+		const std::vector<NetworkTileEditState> pendingEdits = m_pendingNetworkTileEdits;
+		m_pendingNetworkTileEdits.clear();
+		for (const NetworkTileEditState& edit : pendingEdits)
+			ApplyNetworkTileEdit(edit.tileX, edit.tileY, edit.tileIndex, edit.visible);
+	}
+	if (!m_pendingNetworkDroppedItems.empty())
+	{
+		const std::vector<DroppedItemState> pendingItems = m_pendingNetworkDroppedItems;
+		m_pendingNetworkDroppedItems.clear();
+		for (const DroppedItemState& item : pendingItems)
+		{
+			ApplyNetworkDroppedItemState(item.networkId, 0, item.pickupPlayerId, item.x, item.y, item.velocityX, item.velocityY,
+				item.pickupDelay, item.tileIndex, item.amount, item.alive ? 1 : 0);
+		}
+	}
 }
 
 void GameEngine::UpdateFrameStats(float deltaTime)
@@ -1868,9 +2100,9 @@ void GameEngine::ToggleFrameLimiter()
 
 	char text[48] = {};
 	if (m_frameLimitEnabled)
-		std::snprintf(text, sizeof(text), "FPS LIMIT %dHZ", m_targetRefreshRate);
+		std::snprintf(text, sizeof(text), "프레임 제한 %d", m_targetRefreshRate);
 	else
-		std::snprintf(text, sizeof(text), "FPS LIMIT OFF");
+		std::snprintf(text, sizeof(text), "프레임 제한 끔");
 
 	SetStatusText(text, 1.6f);
 }
@@ -1988,95 +2220,161 @@ void GameEngine::RevealAllMap()
 	m_debugRevealMap = true;
 	m_minimapExpanded = true;
 	m_minimapDirty = true;
-	SetStatusText("MAP REVEALED", 1.6f);
+	SetStatusText("지도 공개됨", 1.6f);
 }
 
 void GameEngine::UpdateInventoryInput()
 {
-	if (m_window != nullptr)
-	{
-		m_inventoryWheelRemainder += m_window->ConsumeMouseWheelDelta();
-		const int wheelSteps = m_inventoryWheelRemainder / WHEEL_DELTA;
-		if (wheelSteps != 0)
-		{
-			m_inventoryWheelRemainder -= wheelSteps * WHEEL_DELTA;
-			m_selectedInventorySlot -= wheelSteps;
-			m_selectedInventorySlot %= InventorySlotCount;
-			if (m_selectedInventorySlot < 0)
-				m_selectedInventorySlot += InventorySlotCount;
-		}
-	}
+	if (!m_acceptInput)
+		return;
 
 	for (int slot = 0; slot < InventorySlotCount; ++slot)
 	{
 		const int keyCode = slot < 9 ? 0x31 + slot : 0x30;
-		if (m_input->IsDown(keyCode, this))
+		if (IsKeyDown(keyCode))
 			m_selectedInventorySlot = slot;
 	}
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (GetCursorViewPosition(cursorX, cursorY))
+	{
+		const int hoveredSlot = GetInventorySlotAt(cursorX, cursorY);
+		if (hoveredSlot >= 0)
+		{
+			if (IsKeyHeld(VK_LBUTTON))
+				m_uiConsumesLeftMouse = true;
+			if (IsKeyDown(VK_LBUTTON))
+				m_selectedInventorySlot = hoveredSlot;
+		}
+	}
+}
+
+void GameEngine::UpdateDebugLogInput()
+{
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (!GetCursorViewPosition(cursorX, cursorY))
+		return;
+
+	const UiRect panel = GetLogPanelRect();
+	const float panelCenterX = panel.left + panel.width * 0.5f;
+	const float panelCenterY = panel.top - panel.height * 0.5f;
+	if (!IsPointInsideRect(cursorX, cursorY, panelCenterX, panelCenterY, panel.width, panel.height))
+		return;
+
+	if (IsKeyHeld(VK_LBUTTON))
+		m_uiConsumesLeftMouse = true;
+	if (!IsKeyDown(VK_LBUTTON))
+		return;
+
+	const float buttonHeight = 20.0f;
+	const float buttonY = panel.top - 53.0f;
+	const float perfX = panel.left + 46.0f;
+	const float capX = panel.left + 122.0f;
+	const float revealX = panel.left + 205.0f;
+	if (IsPointInsideRect(cursorX, cursorY, perfX, buttonY, 68.0f, buttonHeight))
+	{
+		m_showRenderStats = !m_showRenderStats;
+		return;
+	}
+	if (IsPointInsideRect(cursorX, cursorY, capX, buttonY, 68.0f, buttonHeight))
+	{
+		ToggleFrameLimiter();
+		return;
+	}
+	if (IsPointInsideRect(cursorX, cursorY, revealX, buttonY, 78.0f, buttonHeight))
+	{
+		RevealAllMap();
+		return;
+	}
+}
+
+void GameEngine::ClampCraftingScrollOffset()
+{
+	m_craftingScrollOffset = std::clamp(m_craftingScrollOffset, 0, GetMaxCraftingScrollOffset());
+}
+
+int GameEngine::GetCraftingRecipeCount() const
+{
+	return IsCraftingTableNearby() ? 3 : 1;
+}
+
+int GameEngine::GetVisibleCraftingRecipeRows() const
+{
+	const CraftingPanelLayout layout = GetCraftingPanelLayout();
+	const float rowStride = layout.rowHeight + 6.0f;
+	if (rowStride <= 0.0f)
+		return 1;
+
+	return (std::max)(1, static_cast<int>((layout.height - 12.0f) / rowStride));
+}
+
+int GameEngine::GetMaxCraftingScrollOffset() const
+{
+	return (std::max)(0, GetCraftingRecipeCount() - GetVisibleCraftingRecipeRows());
 }
 
 bool GameEngine::CraftSword()
 {
-	if (m_inventoryCounts[SlotSword] > 0)
-	{
-		m_selectedInventorySlot = SlotSword;
-		SetStatusText("SWORD EQUIPPED", 1.2f);
-		return true;
-	}
-
 	if (!CanCraftSword())
 	{
-		SetStatusText("NEED 2 WOOD 3 STONE", 1.5f);
+		SetStatusText("재료 부족: 나무 2 돌 3", 1.5f);
 		return false;
 	}
 
 	m_inventoryCounts[SlotWood] -= 2;
 	m_inventoryCounts[SlotStone] -= 3;
-	m_inventoryCounts[SlotSword] = 1;
+	++m_inventoryCounts[SlotSword];
 	m_selectedInventorySlot = SlotSword;
-	SetStatusText("SWORD CRAFTED", 1.8f);
+	SetStatusText("검 제작됨", 1.8f);
 	return true;
 }
 
 bool GameEngine::CraftAxe()
 {
-	if (m_inventoryCounts[SlotAxe] > 0)
-	{
-		m_selectedInventorySlot = SlotAxe;
-		SetStatusText("AXE EQUIPPED", 1.2f);
-		return true;
-	}
-
 	if (!CanCraftAxe())
 	{
-		SetStatusText("NEED 3 WOOD 2 STONE", 1.5f);
+		SetStatusText("재료 부족: 나무 3 돌 2", 1.5f);
 		return false;
 	}
 
 	m_inventoryCounts[SlotWood] -= 3;
 	m_inventoryCounts[SlotStone] -= 2;
-	m_inventoryCounts[SlotAxe] = 1;
+	++m_inventoryCounts[SlotAxe];
 	m_selectedInventorySlot = SlotAxe;
-	SetStatusText("AXE CRAFTED", 1.8f);
+	SetStatusText("도끼 제작됨", 1.8f);
 	return true;
 }
 
-bool GameEngine::CraftFirstAvailableAtTable()
+bool GameEngine::CraftTable()
 {
-	if (m_inventoryCounts[SlotSword] <= 0 && CanCraftSword())
+	if (!CanCraftTable())
+	{
+		SetStatusText("재료 부족: 나무 4", 1.5f);
+		return false;
+	}
+
+	m_inventoryCounts[SlotWood] -= 4;
+	++m_inventoryCounts[SlotCraftingTable];
+	m_selectedInventorySlot = SlotCraftingTable;
+	SetStatusText("작업대 제작됨", 1.8f);
+	return true;
+}
+
+bool GameEngine::CraftRecipe(int recipeIndex)
+{
+	ClampCraftingScrollOffset();
+	if (recipeIndex < 0 || recipeIndex >= GetCraftingRecipeCount())
+		return false;
+
+	if (recipeIndex == 0)
+		return CraftTable();
+	if (recipeIndex == 1 && IsCraftingTableNearby())
 		return CraftSword();
-	if (m_inventoryCounts[SlotAxe] <= 0 && CanCraftAxe())
-		return CraftAxe();
-	if (m_inventoryCounts[SlotSword] <= 0)
-		return CraftSword();
-	if (m_inventoryCounts[SlotAxe] <= 0)
-		return CraftAxe();
-	if (m_selectedInventorySlot != SlotSword)
-		return CraftSword();
-	if (m_selectedInventorySlot != SlotAxe)
+	if (recipeIndex == 2 && IsCraftingTableNearby())
 		return CraftAxe();
 
-	SetStatusText("TOOLS READY", 1.3f);
 	return false;
 }
 
@@ -2092,61 +2390,65 @@ void GameEngine::UpdateCrafting(float deltaTime)
 		}
 	}
 
-	if (m_input == nullptr)
+	if (!m_acceptInput || m_input == nullptr)
 		return;
 
-	if (IsCraftingTableNearby())
+	if (m_window != nullptr)
 	{
-		if (IsCursorOverCraftingPanel() && IsKeyHeld(VK_LBUTTON))
-			m_uiConsumesLeftMouse = true;
-
-		if (m_input->IsDown(VK_LBUTTON, this))
+		const int wheelDelta = m_window->ConsumeMouseWheelDelta();
+		if (wheelDelta != 0)
 		{
-			float cursorX = 0.0f;
-			float cursorY = 0.0f;
-			if (GetCursorViewPosition(cursorX, cursorY))
+			if (IsCursorOverCraftingPanel())
 			{
-				const int recipe = GetCraftingRecipeAt(cursorX, cursorY);
-				if (recipe >= 0)
+				m_craftingWheelRemainder += wheelDelta;
+				const int wheelSteps = m_craftingWheelRemainder / WHEEL_DELTA;
+				if (wheelSteps != 0)
 				{
-					m_uiConsumesLeftMouse = true;
-					if (recipe == 0)
-						CraftSword();
-					else if (recipe == 1)
-						CraftAxe();
-
-					return;
+					m_craftingWheelRemainder -= wheelSteps * WHEEL_DELTA;
+					m_craftingScrollOffset -= wheelSteps;
+					ClampCraftingScrollOffset();
+				}
+			}
+			else
+			{
+				m_inventoryWheelRemainder += wheelDelta;
+				const int wheelSteps = m_inventoryWheelRemainder / WHEEL_DELTA;
+				if (wheelSteps != 0)
+				{
+					m_inventoryWheelRemainder -= wheelSteps * WHEEL_DELTA;
+					m_selectedInventorySlot -= wheelSteps;
+					m_selectedInventorySlot %= InventorySlotCount;
+					if (m_selectedInventorySlot < 0)
+						m_selectedInventorySlot += InventorySlotCount;
 				}
 			}
 		}
-
-		if (m_input->IsDown(KeyC, this))
-		{
-			CraftFirstAvailableAtTable();
-			return;
-		}
-
-		return;
 	}
 
-	if (!m_input->IsDown(KeyC, this))
+	ClampCraftingScrollOffset();
+
+	if (IsCursorOverCraftingPanel() && IsKeyHeld(VK_LBUTTON))
+		m_uiConsumesLeftMouse = true;
+
+	if (!IsKeyDown(VK_LBUTTON))
 		return;
 
-	if (m_inventoryCounts[SlotWood] >= 4)
-	{
-		m_inventoryCounts[SlotWood] -= 4;
-		++m_inventoryCounts[SlotCraftingTable];
-		m_selectedInventorySlot = SlotCraftingTable;
-		SetStatusText("TABLE CRAFTED", 1.8f);
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (!GetCursorViewPosition(cursorX, cursorY))
 		return;
-	}
 
-	SetStatusText("NEED TABLE OR 4 WOOD", 1.8f);
+	const int recipe = GetCraftingRecipeAt(cursorX, cursorY);
+	if (recipe < 0)
+		return;
+
+	m_uiConsumesLeftMouse = true;
+	CraftRecipe(recipe);
 }
 
 void GameEngine::TryPlaceSelectedBlock()
 {
-	if (m_input == nullptr || !m_input->IsDown(VK_RBUTTON, this))
+	if (!IsKeyDown(VK_RBUTTON))
 		return;
 	if (IsCursorOverCraftingPanel())
 		return;
@@ -2162,6 +2464,7 @@ void GameEngine::TryPlaceSelectedBlock()
 	m_blockBreaks[blockIndex] = BlockBreakState{};
 	MarkBlockChunkDirty(tileX, tileY);
 	--m_inventoryCounts[m_selectedInventorySlot];
+	PublishLocalTileEdit(tileX, tileY);
 }
 
 void GameEngine::UpdatePlayer(float deltaTime)
@@ -2228,7 +2531,7 @@ void GameEngine::UpdatePlayer(float deltaTime)
 		}
 	}
 
-	if (m_input->IsDown(KeyJump, this) && m_player.onGround)
+	if (IsKeyDown(KeyJump) && m_player.onGround)
 	{
 		m_player.velocityY = jumpSpeed;
 		m_player.onGround = false;
@@ -2310,7 +2613,7 @@ void GameEngine::UpdatePlayerCombat(float deltaTime)
 		m_playerHurtFlashTimer = 0.0f;
 		m_playerKnockbackTimer = 0.0f;
 		m_playerKnockbackCooldownTimer = 0.0f;
-		SetStatusText("RESPAWNED", 1.8f);
+		SetStatusText("부활", 1.8f);
 	}
 
 	TryPlayerAttack();
@@ -2318,7 +2621,7 @@ void GameEngine::UpdatePlayerCombat(float deltaTime)
 
 void GameEngine::TryPlayerAttack()
 {
-	if (m_uiConsumesLeftMouse || m_input == nullptr || !m_input->IsDown(VK_LBUTTON, this))
+	if (m_uiConsumesLeftMouse || !IsKeyDown(VK_LBUTTON))
 		return;
 
 	if (!ShouldLeftClickAttack())
@@ -2374,7 +2677,7 @@ void GameEngine::TryPlayerAttack()
 
 	if (hit)
 	{
-		SetStatusText("HIT", 0.5f);
+		SetStatusText("명중", 0.5f);
 	}
 }
 
@@ -2602,7 +2905,7 @@ void GameEngine::UpdateMonsters(float deltaTime)
 			if (monster.contactDirection == 0)
 				monster.contactDirection = monster.facing;
 			monster.contactTimer = (std::max)(monster.contactTimer, 0.28f);
-			SetStatusText("ZOMBIE HIT", 0.8f);
+			SetStatusText("몬스터 명중", 0.8f);
 		}
 	}
 
@@ -2678,23 +2981,31 @@ void GameEngine::UpdateDroppedItems(float deltaTime)
 		if (item.pickupDelay > 0.0f)
 			item.pickupDelay -= deltaTime;
 
-		const float deltaToPlayerX = m_player.x - item.x;
-		const float deltaToPlayerY = m_player.y - item.y;
-		const float distanceSq = deltaToPlayerX * deltaToPlayerX + deltaToPlayerY * deltaToPlayerY;
-		if (item.pickupDelay <= 0.0f && distanceSq <= pickupRadius * pickupRadius)
+		const float deltaToLocalPlayerX = m_player.x - item.x;
+		const float deltaToLocalPlayerY = m_player.y - item.y;
+		const float localDistanceSq = deltaToLocalPlayerX * deltaToLocalPlayerX + deltaToLocalPlayerY * deltaToLocalPlayerY;
+		if (CanLocalPlayerPickupItem(item) && item.pickupDelay <= 0.0f && localDistanceSq <= pickupRadius * pickupRadius)
 		{
 			AddBlockToInventory(item.tileIndex, item.amount);
+			EnsureDroppedItemNetworkId(item);
 			item.alive = false;
+			PublishDroppedItemState(item);
 			continue;
 		}
 
-		if (item.pickupDelay <= 0.0f && distanceSq <= magnetRadius * magnetRadius)
+		float targetX = 0.0f;
+		float targetY = 0.0f;
+		const bool hasPickupTarget = TryGetDroppedItemPickupPosition(item, targetX, targetY);
+		const float deltaToTargetX = targetX - item.x;
+		const float deltaToTargetY = targetY - item.y;
+		const float targetDistanceSq = deltaToTargetX * deltaToTargetX + deltaToTargetY * deltaToTargetY;
+		if (item.pickupDelay <= 0.0f && hasPickupTarget && targetDistanceSq <= magnetRadius * magnetRadius)
 		{
-			const float distance = std::sqrt((std::max)(distanceSq, 0.001f));
+			const float distance = std::sqrt((std::max)(targetDistanceSq, 0.001f));
 			const float pullStrength = 1.0f - Clamp01(distance / magnetRadius);
 			const float targetSpeed = m_tileSize * (18.0f + pullStrength * 32.0f);
-			const float targetVelocityX = (deltaToPlayerX / distance) * targetSpeed;
-			const float targetVelocityY = (deltaToPlayerY / distance) * targetSpeed;
+			const float targetVelocityX = (deltaToTargetX / distance) * targetSpeed;
+			const float targetVelocityY = (deltaToTargetY / distance) * targetSpeed;
 			const float steer = Clamp01(deltaTime * (10.0f + pullStrength * 18.0f));
 			item.velocityX += (targetVelocityX - item.velocityX) * steer;
 			item.velocityY += (targetVelocityY - item.velocityY) * steer;
@@ -2774,6 +3085,18 @@ void GameEngine::UpdateLeafParticles(float deltaTime)
 
 void GameEngine::UpdateBlockBreaking(float deltaTime)
 {
+	auto stopPublishedBreak = [this]()
+	{
+		if (m_networkBreakingBlockIndex < 0)
+			return;
+
+		const int tileX = m_networkBreakingBlockIndex % m_blockWidth;
+		const int tileY = m_networkBreakingBlockIndex / m_blockWidth;
+		if (IsTileInBounds(tileX, tileY))
+			PublishBlockBreakState(tileX, tileY, 0.0f, false);
+		m_networkBreakingBlockIndex = -1;
+	};
+
 	int miningBlockIndex = -1;
 	if (m_input != nullptr && IsKeyHeld(VK_LBUTTON))
 	{
@@ -2787,26 +3110,38 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 		breakState.active = 0;
 
 	if (m_uiConsumesLeftMouse)
+	{
+		stopPublishedBreak();
 		return;
+	}
 
 	if (miningBlockIndex < 0 || miningBlockIndex >= static_cast<int>(m_blockBreaks.size()))
+	{
+		stopPublishedBreak();
 		return;
+	}
 
 	if (m_blocks[miningBlockIndex].visible == 0)
 	{
 		m_blockBreaks[miningBlockIndex] = BlockBreakState();
+		stopPublishedBreak();
 		return;
 	}
+
+	if (m_networkBreakingBlockIndex >= 0 && m_networkBreakingBlockIndex != miningBlockIndex)
+		stopPublishedBreak();
+	m_networkBreakingBlockIndex = miningBlockIndex;
 
 	BlockBreakState& breakState = m_blockBreaks[miningBlockIndex];
 	breakState.active = 1;
 	breakState.idleTime = 0.0f;
 	breakState.progress += deltaTime / GetBlockBreakDuration(m_blocks[miningBlockIndex].tileIndex);
+	const int tileX = miningBlockIndex % m_blockWidth;
+	const int tileY = miningBlockIndex / m_blockWidth;
+	PublishBlockBreakState(tileX, tileY, breakState.progress, true);
 	if (breakState.progress < 1.0f)
 		return;
 
-	const int tileX = miningBlockIndex % m_blockWidth;
-	const int tileY = miningBlockIndex / m_blockWidth;
 	TryHarvestTreeAt(tileX, tileY);
 	if (m_blocks[miningBlockIndex].visible != 0)
 	{
@@ -2819,11 +3154,14 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 			SpawnLeafBreakEffect(tileX, tileY);
 		m_blocks[miningBlockIndex].visible = 0;
 		MarkBlockChunkDirty(tileX, tileY);
+		PublishLocalTileEdit(tileX, tileY);
 	}
 
 	breakState.active = 0;
 	breakState.progress = 0.0f;
 	breakState.idleTime = 0.0f;
+	PublishBlockBreakState(tileX, tileY, 0.0f, false);
+	m_networkBreakingBlockIndex = -1;
 }
 
 void GameEngine::DrawBackground()
@@ -3255,6 +3593,10 @@ void GameEngine::DrawCaveWallLayer(float baseY, float spacing, float parallaxX, 
 
 void GameEngine::DrawWorld()
 {
+	const UiRect gameViewport = GetGameViewportRect();
+	if (m_renderer != nullptr)
+		m_renderer->SetViewportRect(gameViewport.left, gameViewport.top, gameViewport.width, gameViewport.height);
+
 	DrawBackground();
 
 	BlockGridDesc gridDesc;
@@ -3279,6 +3621,7 @@ void GameEngine::DrawWorld()
 	DrawLeafParticles();
 	DrawDroppedItems();
 	DrawMonsters();
+	DrawRemotePlayers();
 
 	const bool wantsLeft = IsKeyHeld(KeyA);
 	const bool wantsRight = IsKeyHeld(KeyD);
@@ -3331,14 +3674,16 @@ void GameEngine::DrawWorld()
 	m_renderer->DrawSprite(playerDesc);
 	DrawPlayerAttackMotion();
 	DrawAttackArc();
+
+	if (m_renderer != nullptr)
+		m_renderer->ResetViewportRect();
+	DrawUiShell();
 	DrawInventory();
 	DrawEquipmentTooltip();
 	DrawMinimap();
-	DrawPlayerStatus();
 	DrawPlayerStatsPanel();
 	DrawCraftingPanel();
-	DrawCraftingPrompt();
-	DrawFrameStats();
+	DrawDebugLogPanel();
 }
 
 void GameEngine::DrawBlockCracks()
@@ -3359,28 +3704,49 @@ void GameEngine::DrawBlockCracks()
 			if (!breakState.active || m_blocks[blockIndex].visible == 0)
 				continue;
 
-			const float progress = Clamp01(breakState.progress);
-			const float centerX = m_worldOriginX + x * m_tileSize - m_cameraX;
-			const float centerY = m_worldOriginY - y * m_tileSize - m_cameraY;
-			const float thickness = 1.25f + progress * 1.75f;
-			const float alpha = 0.35f + progress * 0.55f;
-
-			for (const CrackSegment& segment : CrackSegments)
-			{
-				if (progress <= segment.appearAt)
-					continue;
-
-				const float segmentProgress = Clamp01((progress - segment.appearAt) / (segment.completeAt - segment.appearAt));
-				const float startX = centerX + segment.startX * m_tileSize;
-				const float startY = centerY + segment.startY * m_tileSize;
-				const float fullEndX = centerX + segment.endX * m_tileSize;
-				const float fullEndY = centerY + segment.endY * m_tileSize;
-				const float endX = startX + (fullEndX - startX) * segmentProgress;
-				const float endY = startY + (fullEndY - startY) * segmentProgress;
-
-				DrawCrackLine(startX, startY, endX, endY, thickness, alpha);
-			}
+			DrawBlockCrackPattern(x, y, breakState.progress);
 		}
+	}
+
+	for (const RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	{
+		if (!remoteBreak.active)
+			continue;
+		if (remoteBreak.tileX < startX || remoteBreak.tileX > endX || remoteBreak.tileY < startY || remoteBreak.tileY > endY)
+			continue;
+		if (!IsTileInBounds(remoteBreak.tileX, remoteBreak.tileY))
+			continue;
+
+		const int blockIndex = remoteBreak.tileY * m_blockWidth + remoteBreak.tileX;
+		if (m_blocks[blockIndex].visible == 0)
+			continue;
+
+		DrawBlockCrackPattern(remoteBreak.tileX, remoteBreak.tileY, remoteBreak.progress);
+	}
+}
+
+void GameEngine::DrawBlockCrackPattern(int tileX, int tileY, float progress)
+{
+	progress = Clamp01(progress);
+	const float centerX = m_worldOriginX + tileX * m_tileSize - m_cameraX;
+	const float centerY = m_worldOriginY - tileY * m_tileSize - m_cameraY;
+	const float thickness = 1.25f + progress * 1.75f;
+	const float alpha = 0.35f + progress * 0.55f;
+
+	for (const CrackSegment& segment : CrackSegments)
+	{
+		if (progress <= segment.appearAt)
+			continue;
+
+		const float segmentProgress = Clamp01((progress - segment.appearAt) / (segment.completeAt - segment.appearAt));
+		const float startX = centerX + segment.startX * m_tileSize;
+		const float startY = centerY + segment.startY * m_tileSize;
+		const float fullEndX = centerX + segment.endX * m_tileSize;
+		const float fullEndY = centerY + segment.endY * m_tileSize;
+		const float endX = startX + (fullEndX - startX) * segmentProgress;
+		const float endY = startY + (fullEndY - startY) * segmentProgress;
+
+		DrawCrackLine(startX, startY, endX, endY, thickness, alpha);
 	}
 }
 
@@ -3570,6 +3936,89 @@ void GameEngine::DrawDroppedItems()
 	}
 }
 
+void GameEngine::DrawRemotePlayers()
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return;
+
+	const float viewHalfWidth = GetViewHalfWidth();
+	const float viewHalfHeight = GetViewHalfHeight();
+	const float cullMargin = m_tileSize * 4.0f;
+	const float playerSpriteYOffset = -m_playerCollisionHeight * 0.5f + m_playerDrawHeight * 0.5f;
+
+	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	{
+		if (!remotePlayer.active)
+			continue;
+
+		const PlayerState& player = remotePlayer.player;
+		const float drawX = player.x - m_cameraX;
+		const float drawY = player.y - m_cameraY;
+		if (drawX < -viewHalfWidth - cullMargin || drawX > viewHalfWidth + cullMargin ||
+			drawY < -viewHalfHeight - cullMargin || drawY > viewHalfHeight + cullMargin)
+			continue;
+
+		SpriteDesc shadowDesc;
+		shadowDesc.textureFile = nullptr;
+		shadowDesc.positionX = drawX;
+		shadowDesc.positionY = drawY - m_playerCollisionHeight * 0.52f;
+		shadowDesc.width = 20.0f;
+		shadowDesc.height = 3.4f;
+		shadowDesc.colorA = 0.24f;
+		shadowDesc.depth = -0.82f;
+		m_renderer->DrawSprite(shadowDesc);
+
+		SpriteDesc playerDesc;
+		playerDesc.positionX = drawX;
+		playerDesc.positionY = drawY + playerSpriteYOffset;
+		playerDesc.width = m_playerDrawWidth;
+		playerDesc.height = m_playerDrawHeight;
+		playerDesc.flipX = player.facing > 0 ? 1 : 0;
+		playerDesc.depth = -1.05f;
+		playerDesc.textureFile = PlayerSpriteTexture;
+		playerDesc.atlasColumns = PlayerSpriteColumns;
+		playerDesc.atlasRows = PlayerSpriteRows;
+		playerDesc.colorR = 0.72f;
+		playerDesc.colorG = 0.90f;
+		playerDesc.colorB = 1.0f;
+
+		if (remotePlayer.attackTimer > 0.0f)
+		{
+			const float attackProgress = 1.0f - Clamp01(remotePlayer.attackTimer / PlayerAttackDuration);
+			const float lunge = std::sin(attackProgress * 3.1415926f);
+			playerDesc.positionX += player.facing * (3.0f + lunge * 4.5f);
+			playerDesc.positionY -= lunge * 1.4f;
+			playerDesc.rotationRadians = player.facing * (0.035f + lunge * 0.060f);
+		}
+
+		if (!player.onGround)
+		{
+			playerDesc.tileIndex = PlayerJumpFrame;
+		}
+		else if (std::fabs(player.velocityX) > 1.0f)
+		{
+			const int frame = static_cast<int>(player.animationTime / 0.11f) % 4;
+			playerDesc.tileIndex = PlayerWalkFrameStart + frame;
+		}
+		else
+		{
+			playerDesc.tileIndex = PlayerIdleFrameStart + static_cast<int>(player.animationTime / 0.24f) % 4;
+		}
+
+		m_renderer->DrawSprite(playerDesc);
+
+		const float healthRatio = Clamp01(static_cast<float>(remotePlayer.health) / static_cast<float>(GetPlayerMaxHealth()));
+		const float barY = drawY + 25.0f;
+		DrawSolidRect(drawX, barY, 22.0f, 3.0f, 0.02f, 0.02f, 0.02f, 0.68f, -1.12f);
+		DrawSolidRect(drawX - 11.0f + 11.0f * healthRatio, barY,
+			22.0f * healthRatio, 2.0f, 0.18f, 0.70f, 0.95f, 1.0f, -1.18f);
+
+		char label[16] = {};
+		std::snprintf(label, sizeof(label), "친%d", remotePlayer.id);
+		DrawText(drawX - 8.0f, drawY + 38.0f, label, 1.45f, 0.70f, 0.92f, 1.0f, 0.92f, -1.22f);
+	}
+}
+
 void GameEngine::DrawPlayerAttackMotion()
 {
 	if (m_attackTimer <= 0.0f)
@@ -3712,18 +4161,24 @@ void GameEngine::DrawAttackArc()
 
 void GameEngine::DrawInventory()
 {
-	const float slotSize = 42.0f;
-	const float slotGap = 6.0f;
-	const float totalWidth = slotSize * InventorySlotCount + slotGap * (InventorySlotCount - 1);
-	const float slotY = -GetViewHalfHeight() + 38.0f;
-	const float startX = -totalWidth * 0.5f + slotSize * 0.5f;
+	const UiRect panel = GetInventoryPanelRect();
+	DrawUiPanel(panel, "소지품");
+
+	const int columns = 5;
+	const float slotGap = 5.0f;
+	const float slotSize = std::clamp((panel.width - 22.0f - slotGap * static_cast<float>(columns - 1)) / static_cast<float>(columns), 24.0f, 39.0f);
+	const float startX = panel.left + 11.0f + slotSize * 0.5f;
+	const float startY = panel.top - 31.0f - slotSize * 0.5f;
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
 	const int hoveredSlot = GetCursorViewPosition(cursorX, cursorY) ? GetInventorySlotAt(cursorX, cursorY) : -1;
 
 	for (int slot = 0; slot < InventorySlotCount; ++slot)
 	{
-		const float slotX = startX + slot * (slotSize + slotGap);
+		const int column = slot % columns;
+		const int row = slot / columns;
+		const float slotX = startX + column * (slotSize + slotGap);
+		const float slotY = startY - row * (slotSize + slotGap);
 		const bool selected = slot == m_selectedInventorySlot;
 		const bool hovered = slot == hoveredSlot;
 
@@ -3733,11 +4188,11 @@ void GameEngine::DrawInventory()
 		backgroundDesc.positionY = slotY;
 		backgroundDesc.width = slotSize;
 		backgroundDesc.height = slotSize;
-		backgroundDesc.colorR = selected ? 0.16f : (hovered ? 0.075f : 0.035f);
-		backgroundDesc.colorG = selected ? 0.15f : (hovered ? 0.072f : 0.035f);
-		backgroundDesc.colorB = selected ? 0.09f : (hovered ? 0.070f : 0.04f);
-		backgroundDesc.colorA = selected ? 0.76f : (hovered ? 0.70f : 0.58f);
-		backgroundDesc.depth = -5.0f;
+		backgroundDesc.colorR = selected ? 0.105f : (hovered ? 0.085f : 0.058f);
+		backgroundDesc.colorG = selected ? 0.130f : (hovered ? 0.105f : 0.068f);
+		backgroundDesc.colorB = selected ? 0.095f : (hovered ? 0.088f : 0.073f);
+		backgroundDesc.colorA = selected ? 0.84f : (hovered ? 0.76f : 0.64f);
+		backgroundDesc.depth = -6.6f;
 		m_renderer->DrawSprite(backgroundDesc);
 
 		RectOutlineDesc outlineDesc;
@@ -3746,15 +4201,15 @@ void GameEngine::DrawInventory()
 		outlineDesc.width = slotSize;
 		outlineDesc.height = slotSize;
 		outlineDesc.thickness = selected ? 3.0f : (hovered ? 2.0f : 1.5f);
-		outlineDesc.colorR = selected ? 1.0f : (hovered ? 0.82f : 0.55f);
-		outlineDesc.colorG = selected ? 0.86f : (hovered ? 0.78f : 0.58f);
-		outlineDesc.colorB = selected ? 0.28f : (hovered ? 0.60f : 0.62f);
+		outlineDesc.colorR = selected ? 0.82f : (hovered ? 0.74f : 0.42f);
+		outlineDesc.colorG = selected ? 0.88f : (hovered ? 0.82f : 0.48f);
+		outlineDesc.colorB = selected ? 0.78f : (hovered ? 0.70f : 0.42f);
 		outlineDesc.colorA = selected ? 1.0f : (hovered ? 0.94f : 0.78f);
-		outlineDesc.depth = -6.0f;
+		outlineDesc.depth = -7.0f;
 		m_renderer->DrawRectOutline(outlineDesc);
 
 		if (IsInventoryWeaponSlot(slot))
-			DrawWeaponIcon(slotX, slotY + 5.0f, 28.0f, -7.0f, m_inventoryCounts[slot] > 0 ? 1.0f : 0.24f, slot);
+			DrawWeaponIcon(slotX, slotY + 3.0f, slotSize * 0.68f, -7.4f, m_inventoryCounts[slot] > 0 ? 1.0f : 0.24f, slot);
 	}
 
 	for (int slot = 0; slot < InventorySlotCount; ++slot)
@@ -3762,33 +4217,43 @@ void GameEngine::DrawInventory()
 		if (!IsInventoryBlockSlot(slot))
 			continue;
 
-		const float slotX = startX + slot * (slotSize + slotGap);
+		const int column = slot % columns;
+		const int row = slot / columns;
+		const float slotX = startX + column * (slotSize + slotGap);
+		const float slotY = startY - row * (slotSize + slotGap);
 		SpriteDesc blockDesc;
 		blockDesc.textureFile = BlockAtlasTexture;
 		blockDesc.positionX = slotX;
-		blockDesc.positionY = slotY + 5.0f;
-		blockDesc.width = 24.0f;
-		blockDesc.height = 24.0f;
+		blockDesc.positionY = slotY + 3.0f;
+		blockDesc.width = slotSize * 0.58f;
+		blockDesc.height = slotSize * 0.58f;
 		blockDesc.atlasColumns = BlockAtlasColumns;
 		blockDesc.atlasRows = BlockAtlasRows;
 		blockDesc.tileIndex = InventoryTileIndices[slot];
 		blockDesc.colorA = m_inventoryCounts[slot] > 0 ? 1.0f : 0.28f;
-		blockDesc.depth = -7.0f;
+		blockDesc.depth = -7.4f;
 		m_renderer->DrawSprite(blockDesc);
 	}
 
 	for (int slot = 0; slot < InventorySlotCount; ++slot)
 	{
-		const float slotX = startX + slot * (slotSize + slotGap);
+		const int column = slot % columns;
+		const int row = slot / columns;
+		const float slotX = startX + column * (slotSize + slotGap);
+		const float slotY = startY - row * (slotSize + slotGap);
 
 		char countText[8] = {};
 		std::snprintf(countText, sizeof(countText), "%d", m_inventoryCounts[slot]);
-		DrawText(slotX - 14.0f, slotY - 11.0f, countText, 2.0f, 0.0f, 0.0f, 0.0f, 0.75f, -7.5f);
-		DrawText(slotX - 15.0f, slotY - 10.0f, countText, 2.0f, 0.92f, 0.94f, 0.86f, 1.0f, -8.0f);
+		DrawUiText(slotX - slotSize * 0.36f, slotY - slotSize * 0.24f, countText, 1.55f,
+			0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
 
 		char slotText[2] = { slot < 9 ? static_cast<char>('1' + slot) : '0', '\0' };
-		DrawText(slotX - 16.0f, slotY + 18.0f, slotText, 1.7f, 0.82f, 0.84f, 0.82f, 0.95f, -8.0f);
+		DrawUiText(slotX - slotSize * 0.40f, slotY + slotSize * 0.38f, slotText, 1.30f,
+			0.72f, 0.78f, 0.68f, 0.95f, -8.0f);
 	}
+
+	DrawUiText(panel.left + 11.0f, panel.top - panel.height + 14.0f, "1-0 선택 / 우클릭 배치", 1.25f,
+		0.62f, 0.70f, 0.60f, 0.95f, -8.0f);
 }
 
 void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float depth, float alpha, int slot)
@@ -3892,11 +4357,13 @@ void GameEngine::DrawMinimap()
 	int endTileX = m_blockWidth - 1;
 	int startTileY = 0;
 	int endTileY = m_blockHeight - 1;
+	const UiRect panel = GetRightPanelRect(0);
 
 	if (!expanded)
 	{
-		const int halfTilesX = 42;
-		const int halfTilesY = 25;
+		const float panelAspect = (std::max)(1.0f, panel.width - 10.0f) / (std::max)(1.0f, panel.height - 10.0f);
+		const int halfTilesY = 18;
+		const int halfTilesX = (std::max)(36, static_cast<int>(static_cast<float>(halfTilesY) * panelAspect * 1.12f + 0.5f));
 		startTileX = (std::max)(0, centerTileX - halfTilesX);
 		endTileX = (std::min)(m_blockWidth - 1, centerTileX + halfTilesX);
 		startTileY = (std::max)(0, centerTileY - halfTilesY);
@@ -3913,20 +4380,32 @@ void GameEngine::DrawMinimap()
 		pixelSize = std::clamp((std::min)(availableWidth / static_cast<float>(sampleWidth), availableHeight / static_cast<float>(sampleHeight)),
 			0.70f, 4.0f);
 	}
+	else
+	{
+		pixelSize = std::clamp((std::min)((panel.width - 8.0f) / static_cast<float>(sampleWidth), (panel.height - 8.0f) / static_cast<float>(sampleHeight)),
+			0.85f, 9.0f);
+	}
 
 	const float mapWidth = sampleWidth * pixelSize;
 	const float mapHeight = sampleHeight * pixelSize;
-	const float mapLeft = expanded ? -mapWidth * 0.5f : GetViewHalfWidth() - mapWidth - 14.0f;
-	const float mapTop = expanded ? mapHeight * 0.5f : GetViewHalfHeight() - 16.0f;
+	const float mapLeft = expanded ? -mapWidth * 0.5f : panel.left + (panel.width - mapWidth) * 0.5f;
+	const float mapTop = expanded ? mapHeight * 0.5f : panel.top - (panel.height - mapHeight) * 0.5f;
 
 	if (expanded)
 	{
 		DrawSolidRect(0.0f, 0.0f, GetViewHalfWidth() * 2.0f, GetViewHalfHeight() * 2.0f,
 			0.0f, 0.0f, 0.0f, 0.42f, -5.2f);
 	}
+	else
+	{
+		DrawClassicUiPanel(panel, "");
+	}
 
-	DrawSolidRect(mapLeft + mapWidth * 0.5f, mapTop - mapHeight * 0.5f, mapWidth + 8.0f, mapHeight + 8.0f,
-		0.015f, 0.018f, 0.022f, expanded ? 0.88f : 0.74f, -6.0f);
+	if (expanded)
+	{
+		DrawSolidRect(mapLeft + mapWidth * 0.5f, mapTop - mapHeight * 0.5f, mapWidth + 8.0f, mapHeight + 8.0f,
+			0.015f, 0.018f, 0.022f, 0.88f, -6.0f);
+	}
 
 	auto getMapColor = [](unsigned short tileIndex, float& colorR, float& colorG, float& colorB)
 	{
@@ -4116,130 +4595,77 @@ void GameEngine::DrawMinimap()
 		drawMapMarker(monster.x, monster.y, expanded ? 4.2f : 3.5f, 1.0f, 0.22f, 0.18f, true);
 	}
 
-	RectOutlineDesc outlineDesc;
-	outlineDesc.positionX = mapLeft + mapWidth * 0.5f;
-	outlineDesc.positionY = mapTop - mapHeight * 0.5f;
-	outlineDesc.width = mapWidth + 8.0f;
-	outlineDesc.height = mapHeight + 8.0f;
-	outlineDesc.thickness = 1.5f;
-	outlineDesc.colorR = 0.42f;
-	outlineDesc.colorG = 0.45f;
-	outlineDesc.colorB = 0.48f;
-	outlineDesc.colorA = 0.8f;
-	outlineDesc.depth = -7.2f;
-	m_renderer->DrawRectOutline(outlineDesc);
-}
-
-void GameEngine::DrawFrameStats()
-{
-	char fpsText[16] = {};
-	char frameText[16] = {};
-	char capText[16] = {};
-	std::snprintf(fpsText, sizeof(fpsText), "FPS %03d", static_cast<int>(m_displayFps + 0.5f));
-	std::snprintf(frameText, sizeof(frameText), "%.1fMS", m_displayFrameMs);
-	std::snprintf(capText, sizeof(capText), m_frameLimitEnabled ? "CAP %03d" : "CAP OFF", m_targetRefreshRate);
-
-	const float x = -GetViewHalfWidth() + 14.0f;
-	const float y = GetViewHalfHeight() - 14.0f;
-	DrawText(x + 1.5f, y - 1.5f, fpsText, 2.4f, 0.0f, 0.0f, 0.0f, 0.72f, -7.5f);
-	DrawText(x, y, fpsText, 2.4f, 0.66f, 0.95f, 0.72f, 1.0f, -8.0f);
-	DrawText(x + 1.5f, y - 22.5f, frameText, 2.0f, 0.0f, 0.0f, 0.0f, 0.72f, -7.5f);
-	DrawText(x, y - 21.0f, frameText, 2.0f, 0.86f, 0.88f, 0.82f, 1.0f, -8.0f);
-	DrawText(x + 82.2f, y - 22.2f, capText, 1.7f, 0.0f, 0.0f, 0.0f, 0.70f, -7.5f);
-	DrawText(x + 81.0f, y - 21.0f, capText, 1.7f, 0.72f, 0.82f, 0.92f, 1.0f, -8.0f);
-
-	if (m_showRenderStats)
-		DrawRenderStatsOverlay();
-}
-
-void GameEngine::DrawRenderStatsOverlay()
-{
-	if (m_renderer == nullptr)
-		return;
-
-	RenderFrameStats stats;
-	m_renderer->GetLastFrameStats(stats);
-
-	char lines[10][36] = {};
-	std::snprintf(lines[0], sizeof(lines[0]), "F1 PERF STATS");
-	std::snprintf(lines[1], sizeof(lines[1]), "CPU:%.2f DRAW:%.2f", m_displayCpuStats.totalMs, m_displayCpuStats.drawWorldMs);
-	std::snprintf(lines[2], sizeof(lines[2]), "SIM:%.2f MON:%.2f", m_displayCpuStats.simulationMs, m_displayCpuStats.monstersMs);
-	std::snprintf(lines[3], sizeof(lines[3]), "ITEM:%.2f REN:%.2f", m_displayCpuStats.itemsMs, m_displayCpuStats.renderMs);
-	std::snprintf(lines[4], sizeof(lines[4]), "DRAW:%u TEX:%u", stats.drawCalls, stats.textureBinds);
-	std::snprintf(lines[5], sizeof(lines[5]), "SPRITE:%u RECT:%u", stats.spriteDrawCalls, stats.rectOutlineCalls);
-	std::snprintf(lines[6], sizeof(lines[6]), "GRID:%u INST:%u", stats.gridDrawCalls, stats.gridInstances);
-	std::snprintf(lines[7], sizeof(lines[7]), "CH:%u RB:%u", stats.gridChunksDrawn, stats.gridChunksRebuilt);
-	std::snprintf(lines[8], sizeof(lines[8]), "QUADS:%u", stats.spriteQuads);
-	std::snprintf(lines[9], sizeof(lines[9]), "IN:%.2f", m_displayCpuStats.inputMs);
-
-	const float x = -GetViewHalfWidth() + 14.0f;
-	const float y = GetViewHalfHeight() - 112.0f;
-	const float lineHeight = 15.0f;
-	const float panelWidth = 226.0f;
-	const float panelHeight = 153.0f;
-	DrawSolidRect(x + panelWidth * 0.5f - 4.0f, y - panelHeight * 0.5f + 8.0f, panelWidth, panelHeight,
-		0.015f, 0.018f, 0.022f, 0.70f, -7.1f);
-
-	for (int i = 0; i < 10; ++i)
+	if (expanded)
 	{
-		const float lineY = y - i * lineHeight;
-		DrawText(x + 1.2f, lineY - 1.2f, lines[i], 1.8f, 0.0f, 0.0f, 0.0f, 0.72f, -7.6f);
-		DrawText(x, lineY, lines[i], 1.8f, 0.70f, 0.92f, 1.0f, 1.0f, -8.0f);
+		RectOutlineDesc outlineDesc;
+		outlineDesc.positionX = mapLeft + mapWidth * 0.5f;
+		outlineDesc.positionY = mapTop - mapHeight * 0.5f;
+		outlineDesc.width = mapWidth + 8.0f;
+		outlineDesc.height = mapHeight + 8.0f;
+		outlineDesc.thickness = 1.5f;
+		outlineDesc.colorR = 0.42f;
+		outlineDesc.colorG = 0.45f;
+		outlineDesc.colorB = 0.48f;
+		outlineDesc.colorA = 0.8f;
+		outlineDesc.depth = -7.2f;
+		m_renderer->DrawRectOutline(outlineDesc);
 	}
 }
 
 void GameEngine::DrawPlayerStatus()
 {
-	const float x = -GetViewHalfWidth() + 14.0f;
-	const float y = GetViewHalfHeight() - 58.0f;
+	const UiRect panel = GetRightPanelRect(0);
+	const float x = panel.left + 12.0f;
+	const float y = panel.top - 28.0f;
 	const float healthRatio = Clamp01(static_cast<float>(m_playerHealth) / static_cast<float>(GetPlayerMaxHealth()));
 
-	DrawText(x + 1.0f, y - 1.0f, "HP", 2.2f, 0.0f, 0.0f, 0.0f, 0.70f, -7.4f);
-	DrawText(x, y, "HP", 2.2f, 0.92f, 0.86f, 0.78f, 1.0f, -8.0f);
-	DrawSolidRect(x + 64.0f, y - 7.0f, 82.0f, 10.0f, 0.035f, 0.025f, 0.025f, 0.75f, -7.0f);
-	DrawSolidRect(x + 23.0f + 82.0f * healthRatio * 0.5f, y - 7.0f,
-		82.0f * healthRatio, 8.0f, 0.82f, 0.12f, 0.12f, 1.0f, -8.0f);
+	char hpText[24] = {};
+	std::snprintf(hpText, sizeof(hpText), "체력 %d/%d", m_playerHealth, GetPlayerMaxHealth());
+	DrawUiText(x, y, hpText, 1.35f, 0.90f, 0.86f, 0.78f, 1.0f, -8.0f);
+	DrawSolidRect(x + 67.0f, y - 16.0f, 122.0f, 7.0f, 0.035f, 0.025f, 0.025f, 0.92f, -7.0f);
+	DrawSolidRect(x + 6.0f + 122.0f * healthRatio * 0.5f, y - 16.0f,
+		122.0f * healthRatio, 5.0f, 0.64f, 0.90f, 0.32f, 1.0f, -8.0f);
+}
+
+void GameEngine::DrawNetworkStatus()
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return;
+
+	int remoteCount = 0;
+	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	{
+		if (remotePlayer.active)
+			++remoteCount;
+	}
+
+	char statusText[48] = {};
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		std::snprintf(statusText, sizeof(statusText), "통신 참가 대기");
+	else
+		std::snprintf(statusText, sizeof(statusText), "통신 %s 나%d 친구%d", GetNetworkModeText(), m_localPlayerId, remoteCount);
+
+	const UiRect panel = GetRightPanelRect(0);
+	DrawUiText(panel.left + 12.0f, panel.top - 50.0f, statusText, 1.20f,
+		0.62f, 0.88f, 1.0f, 0.96f, -8.0f);
 }
 
 void GameEngine::DrawPlayerStatsPanel()
 {
-	if (!m_showPlayerStats)
-		return;
-
-	const float panelWidth = 178.0f;
-	const float panelHeight = 128.0f;
-	const float left = GetViewHalfWidth() - panelWidth - 14.0f;
-	const float top = GetViewHalfHeight() - 86.0f;
-	const float centerX = left + panelWidth * 0.5f;
-	const float centerY = top - panelHeight * 0.5f;
-
-	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, panelWidth, panelHeight,
-		0.0f, 0.0f, 0.0f, 0.34f, -6.2f);
-	DrawSolidRect(centerX, centerY, panelWidth, panelHeight,
-		0.026f, 0.030f, 0.034f, 0.88f, -6.5f);
-
-	RectOutlineDesc outline;
-	outline.positionX = centerX;
-	outline.positionY = centerY;
-	outline.width = panelWidth;
-	outline.height = panelHeight;
-	outline.thickness = 1.5f;
-	outline.colorR = 0.52f;
-	outline.colorG = 0.68f;
-	outline.colorB = 0.74f;
-	outline.colorA = 0.92f;
-	outline.depth = -7.2f;
-	m_renderer->DrawRectOutline(outline);
+	const UiRect panel = GetRightPanelRect(2);
+	DrawUiPanel(panel, "영웅");
+	const float left = panel.left;
+	const float top = panel.top;
+	const float contentTop = top - 32.0f;
 
 	auto drawPanelText = [this](float x, float y, const char* text, float size,
 		float colorR, float colorG, float colorB)
 	{
-		DrawText(x + 1.1f, y - 1.1f, text, size, 0.0f, 0.0f, 0.0f, 0.72f, -7.6f);
-		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, -8.0f);
+		DrawUiText(x, y, text, size, colorR, colorG, colorB, 1.0f, -8.0f);
 	};
 
 	const bool hasEquipment = IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0;
-	const EquipmentStats equipment = hasEquipment ? GetEquipmentStatsForSlot(m_selectedInventorySlot) : EquipmentStats{ "HAND", "BASIC", 0, 0, 1.0f };
+	const EquipmentStats equipment = hasEquipment ? GetEquipmentStatsForSlot(m_selectedInventorySlot) : EquipmentStats{ "맨손", "기본", 0, 0, 1.0f };
 
 	char hpText[32] = {};
 	char attackText[32] = {};
@@ -4248,22 +4674,21 @@ void GameEngine::DrawPlayerStatsPanel()
 	char jumpText[32] = {};
 	char chopText[32] = {};
 	char gearText[32] = {};
-	std::snprintf(hpText, sizeof(hpText), "HP %d/%d", m_playerHealth, GetPlayerMaxHealth());
-	std::snprintf(attackText, sizeof(attackText), "ATK %d", GetPlayerAttackDamage());
-	std::snprintf(defenseText, sizeof(defenseText), "DEF %d", GetPlayerDefense());
-	std::snprintf(speedText, sizeof(speedText), "SPD %.1f", GetPlayerMoveSpeedTiles());
-	std::snprintf(jumpText, sizeof(jumpText), "JMP %.1f", GetPlayerJumpSpeedTiles());
-	std::snprintf(chopText, sizeof(chopText), "CHOP %.1fX", GetSelectedChopSpeedMultiplier());
-	std::snprintf(gearText, sizeof(gearText), "GEAR %s", equipment.name);
+	std::snprintf(hpText, sizeof(hpText), "체력 %d/%d", m_playerHealth, GetPlayerMaxHealth());
+	std::snprintf(attackText, sizeof(attackText), "공격 %d", GetPlayerAttackDamage());
+	std::snprintf(defenseText, sizeof(defenseText), "방어 %d", GetPlayerDefense());
+	std::snprintf(speedText, sizeof(speedText), "속도 %.1f", GetPlayerMoveSpeedTiles());
+	std::snprintf(jumpText, sizeof(jumpText), "점프 %.1f", GetPlayerJumpSpeedTiles());
+	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", GetSelectedChopSpeedMultiplier());
+	std::snprintf(gearText, sizeof(gearText), "장비 %s", equipment.name);
 
-	drawPanelText(left + 12.0f, top - 14.0f, "PLAYER", 2.0f, 0.86f, 0.94f, 0.98f);
-	drawPanelText(left + 12.0f, top - 35.0f, hpText, 1.65f, 0.94f, 0.82f, 0.76f);
-	drawPanelText(left + 12.0f, top - 53.0f, attackText, 1.65f, 0.95f, 0.84f, 0.58f);
-	drawPanelText(left + 92.0f, top - 53.0f, defenseText, 1.65f, 0.70f, 0.86f, 0.96f);
-	drawPanelText(left + 12.0f, top - 72.0f, speedText, 1.65f, 0.76f, 0.92f, 0.76f);
-	drawPanelText(left + 92.0f, top - 72.0f, jumpText, 1.65f, 0.78f, 0.82f, 0.98f);
-	drawPanelText(left + 12.0f, top - 91.0f, chopText, 1.65f, 0.78f, 0.90f, 0.62f);
-	drawPanelText(left + 12.0f, top - 111.0f, gearText, 1.55f, 0.86f, 0.86f, 0.78f);
+	drawPanelText(left + 12.0f, contentTop, hpText, 1.35f, 0.86f, 0.92f, 0.80f);
+	drawPanelText(left + 12.0f, contentTop - 18.0f, attackText, 1.35f, 0.82f, 0.88f, 0.76f);
+	drawPanelText(left + 96.0f, contentTop - 18.0f, defenseText, 1.35f, 0.82f, 0.88f, 0.76f);
+	drawPanelText(left + 12.0f, contentTop - 36.0f, speedText, 1.35f, 0.76f, 0.84f, 0.72f);
+	drawPanelText(left + 96.0f, contentTop - 36.0f, jumpText, 1.35f, 0.76f, 0.84f, 0.72f);
+	drawPanelText(left + 12.0f, contentTop - 54.0f, chopText, 1.35f, 0.76f, 0.84f, 0.72f);
+	drawPanelText(left + 12.0f, contentTop - 73.0f, gearText, 1.30f, 0.86f, 0.92f, 0.80f);
 }
 
 void GameEngine::DrawEquipmentTooltip()
@@ -4298,19 +4723,19 @@ void GameEngine::DrawEquipmentTooltip()
 	const float centerY = top - panelHeight * 0.5f;
 	const bool owned = m_inventoryCounts[slot] > 0;
 	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, panelWidth, panelHeight,
-		0.0f, 0.0f, 0.0f, 0.35f, -7.0f);
+		0.0f, 0.0f, 0.0f, 0.38f, -7.0f);
 	DrawSolidRect(centerX, centerY, panelWidth, panelHeight,
-		0.030f, 0.034f, 0.038f, 0.92f, -7.3f);
+		0.045f, 0.032f, 0.060f, 0.96f, -7.3f);
 
 	RectOutlineDesc outline;
 	outline.positionX = centerX;
 	outline.positionY = centerY;
 	outline.width = panelWidth;
 	outline.height = panelHeight;
-	outline.thickness = 1.4f;
-	outline.colorR = owned ? 0.82f : 0.44f;
-	outline.colorG = owned ? 0.72f : 0.44f;
-	outline.colorB = owned ? 0.48f : 0.46f;
+	outline.thickness = 1.8f;
+	outline.colorR = owned ? 0.82f : 0.42f;
+	outline.colorG = owned ? 0.88f : 0.48f;
+	outline.colorB = owned ? 0.78f : 0.42f;
 	outline.colorA = 0.96f;
 	outline.depth = -8.0f;
 	m_renderer->DrawRectOutline(outline);
@@ -4325,56 +4750,55 @@ void GameEngine::DrawEquipmentTooltip()
 	char attackText[32] = {};
 	char defenseText[32] = {};
 	char chopText[32] = {};
-	std::snprintf(attackText, sizeof(attackText), "ATK BONUS %d", stats.attackBonus);
-	std::snprintf(defenseText, sizeof(defenseText), "DEF BONUS %d", stats.defenseBonus);
-	std::snprintf(chopText, sizeof(chopText), "CHOP %.1fX", stats.chopSpeedMultiplier);
+	std::snprintf(attackText, sizeof(attackText), "공격 +%d", stats.attackBonus);
+	std::snprintf(defenseText, sizeof(defenseText), "방어 +%d", stats.defenseBonus);
+	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", stats.chopSpeedMultiplier);
 
 	DrawWeaponIcon(left + 21.0f, top - 25.0f, 30.0f, -8.3f, owned ? 1.0f : 0.34f, slot);
 	drawTipText(left + 43.0f, top - 14.0f, stats.name, 1.9f,
-		owned ? 0.96f : 0.56f, owned ? 0.88f : 0.56f, owned ? 0.66f : 0.58f);
-	drawTipText(left + 43.0f, top - 32.0f, owned ? "OWNED READY" : "LOCKED", 1.35f,
-		owned ? 0.70f : 0.74f, owned ? 0.92f : 0.58f, owned ? 0.74f : 0.56f);
-	drawTipText(left + 12.0f, top - 53.0f, attackText, 1.45f, 0.95f, 0.78f, 0.52f);
-	drawTipText(left + 12.0f, top - 68.0f, defenseText, 1.45f, 0.68f, 0.82f, 0.94f);
-	drawTipText(left + 12.0f, top - 83.0f, chopText, 1.45f, 0.76f, 0.90f, 0.60f);
-	drawTipText(left + 93.0f, top - 83.0f, stats.role, 1.25f, 0.82f, 0.82f, 0.74f);
+		owned ? 0.86f : 0.50f, owned ? 0.92f : 0.54f, owned ? 0.80f : 0.50f);
+	drawTipText(left + 43.0f, top - 32.0f, owned ? "사용 가능" : "없음", 1.35f,
+		owned ? 0.72f : 0.56f, owned ? 0.82f : 0.58f, owned ? 0.68f : 0.54f);
+	drawTipText(left + 12.0f, top - 53.0f, attackText, 1.45f, 0.82f, 0.88f, 0.76f);
+	drawTipText(left + 12.0f, top - 68.0f, defenseText, 1.45f, 0.82f, 0.88f, 0.76f);
+	drawTipText(left + 12.0f, top - 83.0f, chopText, 1.45f, 0.72f, 0.82f, 0.68f);
+	drawTipText(left + 93.0f, top - 83.0f, stats.role, 1.25f, 0.72f, 0.78f, 0.66f);
 }
 
 void GameEngine::DrawCraftingPanel()
 {
-	if (!IsCraftingTableNearby())
-		return;
-
+	const UiRect panel = GetRightPanelRect(1);
+	DrawUiPanel(panel, "제작");
 	const CraftingPanelLayout layout = GetCraftingPanelLayout();
-	const float panelCenterX = layout.left + layout.width * 0.5f;
-	const float panelCenterY = layout.top - layout.height * 0.5f;
-
-	DrawSolidRect(panelCenterX + 3.0f, panelCenterY - 3.0f, layout.width, layout.height,
-		0.0f, 0.0f, 0.0f, 0.34f, -6.2f);
-	DrawSolidRect(panelCenterX, panelCenterY, layout.width, layout.height,
-		0.030f, 0.034f, 0.038f, 0.86f, -6.5f);
-
-	RectOutlineDesc panelOutline;
-	panelOutline.positionX = panelCenterX;
-	panelOutline.positionY = panelCenterY;
-	panelOutline.width = layout.width;
-	panelOutline.height = layout.height;
-	panelOutline.thickness = 1.5f;
-	panelOutline.colorR = 0.70f;
-	panelOutline.colorG = 0.58f;
-	panelOutline.colorB = 0.34f;
-	panelOutline.colorA = 0.88f;
-	panelOutline.depth = -7.2f;
-	m_renderer->DrawRectOutline(panelOutline);
+	ClampCraftingScrollOffset();
 
 	auto drawPanelText = [this](float x, float y, const char* text, float size,
 		float colorR, float colorG, float colorB, float depth)
 	{
-		DrawText(x + 1.1f, y - 1.1f, text, size, 0.0f, 0.0f, 0.0f, 0.72f, depth + 0.35f);
-		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, depth);
+		DrawUiText(x, y, text, size, colorR, colorG, colorB, 1.0f, depth);
 	};
 
-	drawPanelText(layout.left + 13.0f, layout.top - 15.0f, "WORKBENCH", 2.1f, 0.94f, 0.82f, 0.54f, -8.0f);
+	auto drawRecipeIcon = [this](float centerX, float centerY, float size, float depth, float alpha, int slot)
+	{
+		if (slot == SlotCraftingTable)
+		{
+			SpriteDesc blockDesc;
+			blockDesc.textureFile = BlockAtlasTexture;
+			blockDesc.positionX = centerX;
+			blockDesc.positionY = centerY;
+			blockDesc.width = size * 0.74f;
+			blockDesc.height = size * 0.74f;
+			blockDesc.atlasColumns = BlockAtlasColumns;
+			blockDesc.atlasRows = BlockAtlasRows;
+			blockDesc.tileIndex = BlockCraftingTable;
+			blockDesc.colorA = alpha;
+			blockDesc.depth = depth;
+			m_renderer->DrawSprite(blockDesc);
+			return;
+		}
+
+		DrawWeaponIcon(centerX, centerY, size, depth, alpha, slot);
+	};
 
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
@@ -4386,28 +4810,35 @@ void GameEngine::DrawCraftingPanel()
 		int slot;
 		int woodCost;
 		int stoneCost;
-		bool owned;
 		bool craftable;
 	};
 
-	const CraftingRow rows[2] =
+	auto getRow = [this](int recipeIndex)
 	{
-		{ "SWORD", SlotSword, 2, 3, m_inventoryCounts[SlotSword] > 0, CanCraftSword() },
-		{ "AXE", SlotAxe, 3, 2, m_inventoryCounts[SlotAxe] > 0, CanCraftAxe() },
+		if (recipeIndex == 1)
+			return CraftingRow{ "검", SlotSword, 2, 3, CanCraftSword() };
+		if (recipeIndex == 2)
+			return CraftingRow{ "도끼", SlotAxe, 3, 2, CanCraftAxe() };
+		return CraftingRow{ "작업대", SlotCraftingTable, 4, 0, CanCraftTable() };
 	};
 
-	for (int i = 0; i < 2; ++i)
+	const int recipeCount = GetCraftingRecipeCount();
+	const int visibleRows = GetVisibleCraftingRecipeRows();
+	const int firstRecipe = m_craftingScrollOffset;
+	const int lastRecipe = (std::min)(recipeCount, firstRecipe + visibleRows);
+	for (int recipe = firstRecipe; recipe < lastRecipe; ++recipe)
 	{
-		const CraftingRow& row = rows[i];
+		const CraftingRow row = getRow(recipe);
+		const int visibleIndex = recipe - firstRecipe;
 		const float rowCenterX = layout.left + layout.width * 0.5f;
-		const float rowCenterY = layout.firstRowCenterY - i * (layout.rowHeight + 7.0f);
-		const bool active = row.owned || row.craftable;
-		const bool hovered = hoveredRecipe == i;
+		const float rowCenterY = layout.firstRowCenterY - visibleIndex * (layout.rowHeight + 6.0f);
+		const bool active = row.craftable;
+		const bool hovered = hoveredRecipe == recipe;
 
 		DrawSolidRect(rowCenterX, rowCenterY, layout.width - 18.0f, layout.rowHeight,
 			hovered ? 0.105f : 0.060f,
-			active ? 0.090f : 0.060f,
-			active ? 0.058f : 0.062f,
+			hovered ? 0.130f : 0.070f,
+			hovered ? 0.095f : 0.075f,
 			hovered ? 0.96f : 0.82f,
 			-6.8f);
 
@@ -4417,66 +4848,483 @@ void GameEngine::DrawCraftingPanel()
 		rowOutline.width = layout.width - 18.0f;
 		rowOutline.height = layout.rowHeight;
 		rowOutline.thickness = hovered ? 2.0f : 1.0f;
-		rowOutline.colorR = active ? 0.74f : 0.38f;
-		rowOutline.colorG = active ? 0.66f : 0.38f;
-		rowOutline.colorB = active ? 0.42f : 0.40f;
+		rowOutline.colorR = active ? 0.78f : 0.38f;
+		rowOutline.colorG = active ? 0.86f : 0.44f;
+		rowOutline.colorB = active ? 0.74f : 0.40f;
 		rowOutline.colorA = hovered ? 1.0f : 0.72f;
 		rowOutline.depth = -7.3f;
 		m_renderer->DrawRectOutline(rowOutline);
 
-		DrawWeaponIcon(layout.left + 31.0f, rowCenterY + 1.0f, 28.0f, -7.8f, active ? 1.0f : 0.32f, row.slot);
+		drawRecipeIcon(layout.left + 31.0f, rowCenterY + 1.0f, 28.0f, -7.8f, active ? 1.0f : 0.32f, row.slot);
 		drawPanelText(layout.left + 57.0f, rowCenterY + 14.0f, row.name, 1.9f,
-			active ? 0.92f : 0.58f, active ? 0.88f : 0.58f, active ? 0.76f : 0.60f, -8.0f);
+			active ? 0.86f : 0.48f, active ? 0.92f : 0.52f, active ? 0.80f : 0.48f, -8.0f);
 
 		char costText[32] = {};
-		std::snprintf(costText, sizeof(costText), "%d WOOD %d STONE", row.woodCost, row.stoneCost);
+		if (row.stoneCost > 0)
+			std::snprintf(costText, sizeof(costText), "나무 %d 돌 %d", row.woodCost, row.stoneCost);
+		else
+			std::snprintf(costText, sizeof(costText), "나무 %d", row.woodCost);
 		drawPanelText(layout.left + 57.0f, rowCenterY - 6.0f, costText, 1.45f,
-			row.craftable || row.owned ? 0.70f : 0.58f,
-			row.craftable || row.owned ? 0.84f : 0.56f,
-			row.craftable || row.owned ? 0.66f : 0.54f,
+			row.craftable ? 0.72f : 0.50f,
+			row.craftable ? 0.82f : 0.54f,
+			row.craftable ? 0.68f : 0.50f,
 			-8.0f);
 
-		const char* stateText = row.owned ? "OWNED" : (row.craftable ? "CRAFT" : "NEED");
+		const char* stateText = row.craftable ? "제작" : "부족";
 		const float badgeX = layout.left + layout.width - 39.0f;
 		DrawSolidRect(badgeX, rowCenterY, 54.0f, 20.0f,
-			row.owned ? 0.06f : (row.craftable ? 0.10f : 0.05f),
-			row.owned ? 0.09f : (row.craftable ? 0.16f : 0.05f),
-			row.owned ? 0.12f : (row.craftable ? 0.08f : 0.06f),
+			row.craftable ? 0.78f : 0.060f,
+			row.craftable ? 0.86f : 0.065f,
+			row.craftable ? 0.74f : 0.070f,
 			0.90f,
 			-7.5f);
-		drawPanelText(badgeX - 21.0f, rowCenterY + 5.0f, stateText, 1.35f,
-			row.owned ? 0.72f : (row.craftable ? 0.74f : 0.70f),
-			row.owned ? 0.88f : (row.craftable ? 0.95f : 0.62f),
-			row.owned ? 0.96f : (row.craftable ? 0.70f : 0.58f),
-			-8.0f);
+		DrawCenteredUiText(badgeX, rowCenterY + 5.0f, stateText, 1.35f,
+			row.craftable ? 0.055f : 0.58f,
+			row.craftable ? 0.050f : 0.62f,
+			row.craftable ? 0.070f : 0.56f,
+			1.0f, -8.0f);
+	}
+
+	if (recipeCount > visibleRows)
+	{
+		const float trackHeight = layout.height - 20.0f;
+		const float trackX = layout.left + layout.width - 7.0f;
+		const float trackCenterY = layout.top - layout.height * 0.5f - 2.0f;
+		DrawSolidRect(trackX, trackCenterY, 3.0f, trackHeight, 0.070f, 0.080f, 0.075f, 0.86f, -7.2f);
+		const float thumbHeight = (std::max)(18.0f, trackHeight * (static_cast<float>(visibleRows) / static_cast<float>(recipeCount)));
+		const float scrollRange = (std::max)(1.0f, trackHeight - thumbHeight);
+		const float scrollT = static_cast<float>(m_craftingScrollOffset) / static_cast<float>(GetMaxCraftingScrollOffset());
+		const float thumbCenterY = layout.top - 10.0f - thumbHeight * 0.5f - scrollRange * scrollT;
+		DrawSolidRect(trackX, thumbCenterY, 5.0f, thumbHeight, 0.78f, 0.86f, 0.74f, 0.92f, -7.8f);
 	}
 }
 
-void GameEngine::DrawCraftingPrompt()
+void GameEngine::DrawDebugLogPanel()
 {
-	const float x = -GetViewHalfWidth() + 14.0f;
-	const float y = GetViewHalfHeight() - 84.0f;
+	const UiRect panel = GetLogPanelRect();
+	DrawUiPanel(panel, "디버그");
+	const float x = panel.left + 12.0f;
+	const float y = panel.top - 30.0f;
+	const float maxTextWidth = (std::max)(24.0f, panel.width - 24.0f);
 	const char* text = m_statusTextTimer > 0.0f ? m_statusText.data() : nullptr;
 
-	auto drawLine = [this, x](float lineY, const char* lineText, float colorR, float colorG, float colorB)
+	char fpsText[24] = {};
+	char frameText[24] = {};
+	char capText[24] = {};
+	std::snprintf(fpsText, sizeof(fpsText), "프레임 %03d", static_cast<int>(m_displayFps + 0.5f));
+	std::snprintf(frameText, sizeof(frameText), "지연 %.1f", m_displayFrameMs);
+	std::snprintf(capText, sizeof(capText), m_frameLimitEnabled ? "제한 %03d" : "제한 끔", m_targetRefreshRate);
+	DrawUiText(x, y, fpsText, 1.32f, 0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
+	DrawUiText(x + 82.0f, y, frameText, 1.20f, 0.82f, 0.88f, 0.76f, 1.0f, -8.0f);
+	DrawUiText(x + 158.0f, y, capText, 1.16f, 0.72f, 0.80f, 0.68f, 1.0f, -8.0f);
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
+	const float buttonY = panel.top - 53.0f;
+	const float buttonHeight = 20.0f;
+	const float perfX = panel.left + 46.0f;
+	const float capX = panel.left + 122.0f;
+	const float revealX = panel.left + 205.0f;
+
+	auto drawDebugButton = [&](float centerX, float width, const char* text)
 	{
-		DrawText(x + 1.2f, lineY - 1.2f, lineText, 1.9f, 0.0f, 0.0f, 0.0f, 0.68f, -7.4f);
-		DrawText(x, lineY, lineText, 1.9f, colorR, colorG, colorB, 1.0f, -8.0f);
+		const bool hovered = hasCursor && IsPointInsideRect(cursorX, cursorY, centerX, buttonY, width, buttonHeight);
+		DrawSolidRect(centerX, buttonY, width, buttonHeight,
+			hovered ? 0.78f : 0.060f,
+			hovered ? 0.86f : 0.070f,
+			hovered ? 0.74f : 0.070f,
+			0.94f, -8.5f);
+
+		RectOutlineDesc outline;
+		outline.positionX = centerX;
+		outline.positionY = buttonY;
+		outline.width = width;
+		outline.height = buttonHeight;
+		outline.thickness = hovered ? 1.8f : 1.1f;
+		outline.colorR = 0.78f;
+		outline.colorG = 0.86f;
+		outline.colorB = 0.74f;
+		outline.colorA = 0.92f;
+		outline.depth = -8.9f;
+		m_renderer->DrawRectOutline(outline);
+
+		DrawCenteredUiText(centerX, buttonY + 4.5f, text, 1.02f,
+			hovered ? 0.055f : 0.84f,
+			hovered ? 0.050f : 0.90f,
+			hovered ? 0.070f : 0.80f,
+			1.0f, -9.1f);
 	};
+
+	char perfText[24] = {};
+	std::snprintf(perfText, sizeof(perfText), m_showRenderStats ? "성능 켬" : "성능");
+	drawDebugButton(perfX, 68.0f, perfText);
+	drawDebugButton(capX, 68.0f, "제한");
+	drawDebugButton(revealX, 78.0f, "지도 공개");
+
+	float lineY = y - 49.0f;
+	auto drawLine = [this, x, maxTextWidth, &lineY](const char* lineText, float colorR, float colorG, float colorB)
+	{
+		lineY = DrawUiWrappedText(x, lineY, lineText, 1.18f, maxTextWidth, 16.0f, colorR, colorG, colorB, 1.0f, -8.0f);
+	};
+
+	if (m_showRenderStats && m_renderer != nullptr)
+	{
+		RenderFrameStats stats;
+		m_renderer->GetLastFrameStats(stats);
+
+		char perfLine[64] = {};
+		std::snprintf(perfLine, sizeof(perfLine), "처리 %.2f 그리기 %.2f 갱신 %.2f", m_displayCpuStats.totalMs, m_displayCpuStats.drawWorldMs, m_displayCpuStats.simulationMs);
+		drawLine(perfLine, 0.72f, 0.82f, 0.68f);
+		std::snprintf(perfLine, sizeof(perfLine), "렌더 %.2f 호출 %u 텍스처 %u", m_displayCpuStats.renderMs, stats.drawCalls, stats.textureBinds);
+		drawLine(perfLine, 0.72f, 0.82f, 0.68f);
+	}
 
 	if (text != nullptr && text[0] != '\0')
 	{
-		drawLine(y, text, 0.86f, 0.88f, 0.80f);
-		return;
+		drawLine(text, 0.86f, 0.92f, 0.80f);
+	}
+	else
+	{
+		if (m_networkMode != NetworkConfig::Mode::SinglePlayer)
+		{
+			int remoteCount = 0;
+			for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+			{
+				if (remotePlayer.active)
+					++remoteCount;
+			}
+
+			char networkText[48] = {};
+			if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+				std::snprintf(networkText, sizeof(networkText), "통신 참가 대기");
+			else
+				std::snprintf(networkText, sizeof(networkText), "통신 %s 나%d 친구 %d", GetNetworkModeText(), m_localPlayerId, remoteCount);
+			drawLine(networkText, 0.72f, 0.82f, 0.68f);
+		}
+		else
+		{
+			drawLine(IsCraftingTableNearby() ? "작업대 근처: 제작 목록 확장" : "기본 제작 목록", 0.72f, 0.82f, 0.68f);
+		}
 	}
 
-	if (IsCraftingTableNearby())
+	char selectedText[80] = {};
+	const char* selectedName = "블록";
+	if (m_selectedInventorySlot == SlotSword)
+		selectedName = "검";
+	else if (m_selectedInventorySlot == SlotAxe)
+		selectedName = "도끼";
+	else if (m_selectedInventorySlot == SlotCraftingTable)
+		selectedName = "작업대";
+	std::snprintf(selectedText, sizeof(selectedText), "선택 %d  %s  수량 %d",
+		m_selectedInventorySlot == 9 ? 0 : m_selectedInventorySlot + 1,
+		selectedName,
+		m_inventoryCounts[m_selectedInventorySlot]);
+	drawLine(selectedText, 0.70f, 0.78f, 0.66f);
+	drawLine("조작: WASD 이동  마우스 채굴/배치  탭 지도", 0.56f, 0.62f, 0.54f);
+}
+
+void GameEngine::DrawUiShell()
+{
+	const UiRect game = GetGameViewportRect();
+
+	RectOutlineDesc outer;
+	outer.positionX = game.left + game.width * 0.5f;
+	outer.positionY = game.top - game.height * 0.5f;
+	outer.width = game.width + 3.0f;
+	outer.height = game.height + 3.0f;
+	outer.thickness = 2.0f;
+	outer.colorR = 0.82f;
+	outer.colorG = 0.88f;
+	outer.colorB = 0.78f;
+	outer.colorA = 0.95f;
+	outer.depth = -9.3f;
+	m_renderer->DrawRectOutline(outer);
+
+	RectOutlineDesc inner = outer;
+	inner.width = game.width - 2.0f;
+	inner.height = game.height - 2.0f;
+	inner.thickness = 1.0f;
+	inner.colorR = 0.42f;
+	inner.colorG = 0.48f;
+	inner.colorB = 0.42f;
+	inner.colorA = 0.90f;
+	inner.depth = -9.6f;
+	m_renderer->DrawRectOutline(inner);
+}
+
+void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
+{
+	if (rect.width <= 0.0f || rect.height <= 0.0f)
 		return;
 
-	if (m_inventoryCounts[SlotCraftingTable] > 0)
-		drawLine(y, "PLACE TABLE SLOT 8", 0.86f, 0.88f, 0.80f);
-	else
-		drawLine(y, "C MAKE TABLE", 0.86f, 0.88f, 0.80f);
+	const float centerX = rect.left + rect.width * 0.5f;
+	const float centerY = rect.top - rect.height * 0.5f;
+	DrawSolidRect(centerX, centerY, rect.width, rect.height,
+		0.045f, 0.032f, 0.060f, 0.98f, depth);
+	DrawSolidRect(centerX, rect.top - 10.0f, rect.width - 6.0f, 17.0f,
+		0.070f, 0.055f, 0.085f, 0.98f, depth - 0.12f);
+
+	RectOutlineDesc outline;
+	outline.positionX = centerX;
+	outline.positionY = centerY;
+	outline.width = rect.width;
+	outline.height = rect.height;
+	outline.thickness = 2.0f;
+	outline.colorR = 0.82f;
+	outline.colorG = 0.88f;
+	outline.colorB = 0.78f;
+	outline.colorA = 0.98f;
+	outline.depth = depth - 0.9f;
+	m_renderer->DrawRectOutline(outline);
+
+	RectOutlineDesc inner = outline;
+	inner.width = rect.width - 6.0f;
+	inner.height = rect.height - 6.0f;
+	inner.thickness = 0.8f;
+	inner.colorR = 0.42f;
+	inner.colorG = 0.48f;
+	inner.colorB = 0.42f;
+	inner.colorA = 0.70f;
+	inner.depth = depth - 1.0f;
+	m_renderer->DrawRectOutline(inner);
+
+	if (title != nullptr && title[0] != '\0')
+		DrawUiText(rect.left + 9.0f, rect.top - 4.5f, title, 1.35f, 0.86f, 0.92f, 0.80f, 1.0f, depth - 1.2f);
+}
+
+void GameEngine::DrawClassicUiPanel(const UiRect& rect, const char* title, float depth)
+{
+	if (rect.width <= 0.0f || rect.height <= 0.0f)
+		return;
+
+	const float centerX = rect.left + rect.width * 0.5f;
+	const float centerY = rect.top - rect.height * 0.5f;
+	DrawSolidRect(centerX, centerY, rect.width, rect.height,
+		0.004f, 0.006f, 0.008f, 0.96f, depth);
+	DrawSolidRect(centerX, rect.top - 10.0f, rect.width - 6.0f, 17.0f,
+		0.018f, 0.024f, 0.027f, 0.96f, depth - 0.12f);
+
+	RectOutlineDesc outline;
+	outline.positionX = centerX;
+	outline.positionY = centerY;
+	outline.width = rect.width;
+	outline.height = rect.height;
+	outline.thickness = 1.6f;
+	outline.colorR = 0.82f;
+	outline.colorG = 0.88f;
+	outline.colorB = 0.78f;
+	outline.colorA = 0.96f;
+	outline.depth = depth - 0.9f;
+	m_renderer->DrawRectOutline(outline);
+
+	RectOutlineDesc inner = outline;
+	inner.width = rect.width - 6.0f;
+	inner.height = rect.height - 6.0f;
+	inner.thickness = 0.8f;
+	inner.colorR = 0.42f;
+	inner.colorG = 0.48f;
+	inner.colorB = 0.42f;
+	inner.colorA = 0.72f;
+	inner.depth = depth - 1.0f;
+	m_renderer->DrawRectOutline(inner);
+
+	if (title != nullptr && title[0] != '\0')
+		DrawUiText(rect.left + 9.0f, rect.top - 4.5f, title, 1.35f, 0.86f, 0.92f, 0.80f, 1.0f, depth - 1.2f);
+}
+
+void GameEngine::DrawUiText(float x, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
+{
+	DrawText(x + 1.0f, y - 1.0f, text, pixelSize, 0.0f, 0.0f, 0.0f, colorA * 0.74f, depth + 0.24f);
+	DrawText(x, y, text, pixelSize, colorR, colorG, colorB, colorA, depth);
+}
+
+void GameEngine::DrawCenteredUiText(float centerX, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
+{
+	DrawUiText(centerX - GetUiTextWidth(text, pixelSize) * 0.5f, y, text, pixelSize, colorR, colorG, colorB, colorA, depth);
+}
+
+float GameEngine::GetUiTextWidth(const char* text, float pixelSize) const
+{
+	if (text == nullptr || text[0] == '\0' || pixelSize <= 0.0f)
+		return 0.0f;
+
+	float currentLineWidth = 0.0f;
+	float maxLineWidth = 0.0f;
+	const unsigned char* cursor = reinterpret_cast<const unsigned char*>(text);
+	while (*cursor != '\0')
+	{
+		const unsigned char lead = *cursor;
+		if (lead == '\r')
+		{
+			++cursor;
+			continue;
+		}
+		if (lead == '\n')
+		{
+			maxLineWidth = (std::max)(maxLineWidth, currentLineWidth);
+			currentLineWidth = 0.0f;
+			++cursor;
+			continue;
+		}
+		if (lead == '\t')
+		{
+			currentLineWidth += pixelSize * 16.0f;
+			++cursor;
+			continue;
+		}
+		if (lead == ' ')
+		{
+			currentLineWidth += pixelSize * 4.0f;
+			++cursor;
+			continue;
+		}
+		if (lead < 0x80)
+		{
+			currentLineWidth += pixelSize * 6.0f;
+			++cursor;
+			continue;
+		}
+
+		size_t byteCount = 1;
+		if ((lead & 0xE0) == 0xC0)
+			byteCount = 2;
+		else if ((lead & 0xF0) == 0xE0)
+			byteCount = 3;
+		else if ((lead & 0xF8) == 0xF0)
+			byteCount = 4;
+
+		currentLineWidth += pixelSize * 12.0f;
+		for (size_t i = 0; i < byteCount && *cursor != '\0'; ++i)
+			++cursor;
+	}
+
+	return (std::max)(maxLineWidth, currentLineWidth);
+}
+
+float GameEngine::DrawUiWrappedText(float x, float y, const char* text, float pixelSize, float maxWidth, float lineHeight, float colorR, float colorG, float colorB, float colorA, float depth)
+{
+	if (text == nullptr || text[0] == '\0')
+		return y;
+
+	float lineY = y;
+	std::string line;
+
+	auto getUtf8SequenceLength = [](const char* cursor)
+	{
+		if (cursor == nullptr || cursor[0] == '\0')
+			return static_cast<size_t>(0);
+
+		const unsigned char lead = static_cast<unsigned char>(cursor[0]);
+		size_t byteCount = 1;
+		if ((lead & 0xE0) == 0xC0)
+			byteCount = 2;
+		else if ((lead & 0xF0) == 0xE0)
+			byteCount = 3;
+		else if ((lead & 0xF8) == 0xF0)
+			byteCount = 4;
+
+		for (size_t i = 1; i < byteCount; ++i)
+		{
+			const unsigned char next = static_cast<unsigned char>(cursor[i]);
+			if (next == '\0' || (next & 0xC0) != 0x80)
+				return static_cast<size_t>(1);
+		}
+
+		return byteCount;
+	};
+
+	auto flushLine = [&]()
+	{
+		if (line.empty())
+			return;
+
+		DrawUiText(x, lineY, line.c_str(), pixelSize, colorR, colorG, colorB, colorA, depth);
+		lineY -= lineHeight;
+		line.clear();
+	};
+
+	auto appendWord = [&](std::string word)
+	{
+		while (GetUiTextWidth(word.c_str(), pixelSize) > maxWidth)
+		{
+			flushLine();
+			std::string segment;
+			size_t offset = 0;
+			while (offset < word.size())
+			{
+				const size_t charLength = getUtf8SequenceLength(word.c_str() + offset);
+				if (charLength == 0)
+					break;
+
+				const std::string nextChar = word.substr(offset, charLength);
+				if (!segment.empty() && GetUiTextWidth((segment + nextChar).c_str(), pixelSize) > maxWidth)
+					break;
+
+				segment += nextChar;
+				offset += charLength;
+			}
+
+			if (segment.empty())
+				break;
+
+			DrawUiText(x, lineY, segment.c_str(), pixelSize, colorR, colorG, colorB, colorA, depth);
+			lineY -= lineHeight;
+			word.erase(0, segment.size());
+		}
+
+		if (word.empty())
+			return;
+
+		if (line.empty())
+		{
+			line = word;
+			return;
+		}
+
+		std::string combined = line;
+		combined += ' ';
+		combined += word;
+		if (GetUiTextWidth(combined.c_str(), pixelSize) <= maxWidth)
+		{
+			line = combined;
+			return;
+		}
+
+		flushLine();
+		line = word;
+	};
+
+	const char* cursor = text;
+	while (*cursor != '\0')
+	{
+		if (*cursor == '\n')
+		{
+			flushLine();
+			++cursor;
+			continue;
+		}
+
+		while (*cursor == ' ' || *cursor == '\t')
+			++cursor;
+
+		if (*cursor == '\0')
+			break;
+		if (*cursor == '\n')
+		{
+			flushLine();
+			++cursor;
+			continue;
+		}
+
+		const char* wordStart = cursor;
+		while (*cursor != '\0' && *cursor != '\n' && *cursor != ' ' && *cursor != '\t')
+			++cursor;
+		appendWord(std::string(wordStart, static_cast<size_t>(cursor - wordStart)));
+	}
+
+	flushLine();
+	return lineY;
 }
 
 void GameEngine::DrawSolidRect(float centerX, float centerY, float width, float height, float colorR, float colorG, float colorB, float colorA, float depth)
@@ -4502,19 +5350,20 @@ void GameEngine::DrawText(float x, float y, const char* text, float pixelSize, f
 {
 	if (text == nullptr || pixelSize <= 0.0f)
 		return;
+	if (m_renderer == nullptr)
+		return;
 
-	float cursorX = x;
-	for (const char* cursor = text; *cursor != '\0'; ++cursor)
-	{
-		if (*cursor == ' ')
-		{
-			cursorX += pixelSize * 4.0f;
-			continue;
-		}
-
-		DrawGlyph(cursorX, y, *cursor, pixelSize, colorR, colorG, colorB, colorA, depth);
-		cursorX += pixelSize * 6.0f;
-	}
+	TextDesc desc;
+	desc.text = text;
+	desc.x = x;
+	desc.y = y;
+	desc.pixelSize = pixelSize;
+	desc.colorR = colorR;
+	desc.colorG = colorG;
+	desc.colorB = colorB;
+	desc.colorA = colorA;
+	desc.depth = depth;
+	m_renderer->DrawText(desc);
 }
 
 void GameEngine::DrawGlyph(float x, float y, char glyph, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
@@ -4542,13 +5391,102 @@ void GameEngine::DrawGlyph(float x, float y, char glyph, float pixelSize, float 
 GameEngine::CraftingPanelLayout GameEngine::GetCraftingPanelLayout() const
 {
 	CraftingPanelLayout layout;
-	layout.left = -GetViewHalfWidth() + 14.0f;
-	layout.top = GetViewHalfHeight() - 112.0f;
-	layout.width = 226.0f;
-	layout.height = 158.0f;
-	layout.rowHeight = 48.0f;
-	layout.firstRowCenterY = layout.top - 62.0f;
+	const UiRect panel = GetRightPanelRect(1);
+	layout.left = panel.left + 8.0f;
+	layout.top = panel.top - 20.0f;
+	layout.width = panel.width - 16.0f;
+	layout.height = panel.height - 28.0f;
+	layout.rowHeight = 34.0f;
+	layout.firstRowCenterY = layout.top - 25.0f;
 	return layout;
+}
+
+GameEngine::UiRect GameEngine::GetGameViewportRect() const
+{
+	const float viewHalfWidth = GetViewHalfWidth();
+	const float viewHalfHeight = GetViewHalfHeight();
+	const float fullWidth = viewHalfWidth * 2.0f;
+	const float fullHeight = viewHalfHeight * 2.0f;
+	const float gap = 6.0f;
+	const float rightPanelWidth = std::clamp(fullWidth * 0.27f, 232.0f, 330.0f);
+	const float gameWidth = (std::max)(fullWidth - rightPanelWidth - gap, fullWidth * 0.55f);
+	const float gameHeight = (std::max)(fullHeight * 0.48f, fullHeight - fullHeight * 0.28f);
+
+	UiRect rect;
+	rect.left = -viewHalfWidth;
+	rect.top = viewHalfHeight;
+	rect.width = (std::min)(gameWidth, fullWidth - rightPanelWidth - gap);
+	rect.height = (std::min)(gameHeight, fullHeight - gap * 2.0f);
+	return rect;
+}
+
+GameEngine::UiRect GameEngine::GetInventoryPanelRect() const
+{
+	const UiRect game = GetGameViewportRect();
+	const float viewHalfHeight = GetViewHalfHeight();
+	const float gap = 6.0f;
+	const float bottomTop = game.top - game.height - gap;
+	const float bottomBottom = -viewHalfHeight + gap;
+	const float bottomHeight = (std::max)(80.0f, bottomTop - bottomBottom);
+
+	UiRect rect;
+	rect.left = game.left + gap;
+	rect.top = bottomTop;
+	rect.width = (std::min)(game.width * 0.50f, 390.0f);
+	rect.height = bottomHeight;
+	return rect;
+}
+
+GameEngine::UiRect GameEngine::GetLogPanelRect() const
+{
+	const UiRect game = GetGameViewportRect();
+	const UiRect inventory = GetInventoryPanelRect();
+	const float viewHalfHeight = GetViewHalfHeight();
+	const float gap = 6.0f;
+	const float bottomTop = game.top - game.height - gap;
+	const float bottomBottom = -viewHalfHeight + gap;
+
+	UiRect rect;
+	rect.left = inventory.left + inventory.width + gap;
+	rect.top = bottomTop;
+	rect.width = (std::max)(80.0f, game.left + game.width - rect.left - gap);
+	rect.height = (std::max)(80.0f, bottomTop - bottomBottom);
+	return rect;
+}
+
+GameEngine::UiRect GameEngine::GetRightPanelRect(int panelIndex) const
+{
+	const UiRect game = GetGameViewportRect();
+	const float viewHalfWidth = GetViewHalfWidth();
+	const float viewHalfHeight = GetViewHalfHeight();
+	const float gap = 6.0f;
+	const float left = game.left + game.width + gap;
+	const float totalHeight = viewHalfHeight * 2.0f - gap * 2.0f;
+	const int safeIndex = std::clamp(panelIndex, 0, 2);
+	const float mapHeight = std::clamp(totalHeight * 0.20f, 88.0f, 126.0f);
+	const float remainingHeight = (std::max)(120.0f, totalHeight - mapHeight - gap * 2.0f);
+	const float craftHeight = remainingHeight * 0.56f;
+	const float heroHeight = remainingHeight - craftHeight;
+
+	UiRect rect;
+	rect.left = left;
+	rect.width = (std::max)(120.0f, viewHalfWidth - gap - left);
+	if (safeIndex == 0)
+	{
+		rect.top = viewHalfHeight - gap;
+		rect.height = mapHeight;
+	}
+	else if (safeIndex == 1)
+	{
+		rect.top = viewHalfHeight - gap - mapHeight - gap;
+		rect.height = craftHeight;
+	}
+	else
+	{
+		rect.top = viewHalfHeight - gap - mapHeight - gap - craftHeight - gap;
+		rect.height = heroHeight;
+	}
+	return rect;
 }
 
 bool GameEngine::GetCursorViewPosition(float& viewX, float& viewY) const
@@ -4582,11 +5520,29 @@ bool GameEngine::GetCursorViewPosition(float& viewX, float& viewY) const
 	return true;
 }
 
+bool GameEngine::GetCursorGameViewPosition(float& viewX, float& viewY) const
+{
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	if (!GetCursorViewPosition(cursorX, cursorY))
+		return false;
+
+	const UiRect game = GetGameViewportRect();
+	if (cursorX < game.left || cursorX > game.left + game.width ||
+		cursorY > game.top || cursorY < game.top - game.height)
+	{
+		return false;
+	}
+
+	const float normalizedX = (cursorX - game.left) / game.width;
+	const float normalizedY = (game.top - cursorY) / game.height;
+	viewX = (normalizedX * 2.0f - 1.0f) * GetViewHalfWidth();
+	viewY = (1.0f - normalizedY * 2.0f) * GetViewHalfHeight();
+	return true;
+}
+
 int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 {
-	if (!IsCraftingTableNearby())
-		return -1;
-
 	const CraftingPanelLayout layout = GetCraftingPanelLayout();
 	if (viewX < layout.left || viewX > layout.left + layout.width ||
 		viewY > layout.top || viewY < layout.top - layout.height)
@@ -4594,9 +5550,14 @@ int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 		return -1;
 	}
 
-	for (int recipe = 0; recipe < 2; ++recipe)
+	const int visibleRows = GetVisibleCraftingRecipeRows();
+	const int recipeCount = GetCraftingRecipeCount();
+	const int safeScrollOffset = std::clamp(m_craftingScrollOffset, 0, (std::max)(0, recipeCount - visibleRows));
+	const int lastRecipe = (std::min)(recipeCount, safeScrollOffset + visibleRows);
+	for (int recipe = safeScrollOffset; recipe < lastRecipe; ++recipe)
 	{
-		const float rowCenterY = layout.firstRowCenterY - recipe * (layout.rowHeight + 7.0f);
+		const int visibleIndex = recipe - safeScrollOffset;
+		const float rowCenterY = layout.firstRowCenterY - visibleIndex * (layout.rowHeight + 6.0f);
 		if (viewY <= rowCenterY + layout.rowHeight * 0.5f &&
 			viewY >= rowCenterY - layout.rowHeight * 0.5f)
 		{
@@ -4609,15 +5570,19 @@ int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 
 int GameEngine::GetInventorySlotAt(float viewX, float viewY) const
 {
-	const float slotSize = 42.0f;
-	const float slotGap = 6.0f;
-	const float totalWidth = slotSize * InventorySlotCount + slotGap * (InventorySlotCount - 1);
-	const float slotY = -GetViewHalfHeight() + 38.0f;
-	const float startX = -totalWidth * 0.5f + slotSize * 0.5f;
+	const UiRect panel = GetInventoryPanelRect();
+	const int columns = 5;
+	const float slotGap = 5.0f;
+	const float slotSize = std::clamp((panel.width - 22.0f - slotGap * static_cast<float>(columns - 1)) / static_cast<float>(columns), 24.0f, 39.0f);
+	const float startX = panel.left + 11.0f + slotSize * 0.5f;
+	const float startY = panel.top - 31.0f - slotSize * 0.5f;
 
 	for (int slot = 0; slot < InventorySlotCount; ++slot)
 	{
-		const float slotX = startX + slot * (slotSize + slotGap);
+		const int column = slot % columns;
+		const int row = slot / columns;
+		const float slotX = startX + column * (slotSize + slotGap);
+		const float slotY = startY - row * (slotSize + slotGap);
 		if (viewX >= slotX - slotSize * 0.5f &&
 			viewX <= slotX + slotSize * 0.5f &&
 			viewY >= slotY - slotSize * 0.5f &&
@@ -4634,7 +5599,7 @@ bool GameEngine::IsCursorOverCraftingPanel() const
 {
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
-	if (!GetCursorViewPosition(cursorX, cursorY) || !IsCraftingTableNearby())
+	if (!GetCursorViewPosition(cursorX, cursorY))
 		return false;
 
 	const CraftingPanelLayout layout = GetCraftingPanelLayout();
@@ -4677,7 +5642,7 @@ bool GameEngine::GetHoveredTile(int& tileX, int& tileY) const
 {
 	float viewX = 0.0f;
 	float viewY = 0.0f;
-	if (!GetCursorViewPosition(viewX, viewY))
+	if (!GetCursorGameViewPosition(viewX, viewY))
 		return false;
 
 	const float worldX = viewX + m_cameraX;
@@ -4718,9 +5683,27 @@ collib::AABB GameEngine::GetTileAABB(int tileX, int tileY) const
 		m_tileSize);
 }
 
+bool GameEngine::IsWindowFocused() const
+{
+	if (m_window == nullptr)
+		return false;
+
+	HWND* hwnd = m_window->GetHWND();
+	if (hwnd == nullptr || *hwnd == nullptr)
+		return false;
+
+	const HWND foregroundWindow = GetForegroundWindow();
+	return foregroundWindow == *hwnd || IsChild(*hwnd, foregroundWindow);
+}
+
+bool GameEngine::IsKeyDown(int keyCode) const
+{
+	return m_acceptInput && m_input != nullptr && m_input->IsDown(keyCode, const_cast<GameEngine*>(this));
+}
+
 bool GameEngine::IsKeyHeld(int keyCode)
 {
-	return m_input->IsDown(keyCode, this) || m_input->IsPressed(keyCode, this);
+	return m_acceptInput && m_input != nullptr && (m_input->IsDown(keyCode, this) || m_input->IsPressed(keyCode, this));
 }
 
 bool GameEngine::IsTileInBounds(int tileX, int tileY) const
@@ -4774,6 +5757,11 @@ bool GameEngine::IsMapTileRevealed(int tileX, int tileY) const
 	return m_revealedTiles[tileY * m_blockWidth + tileX] != 0;
 }
 
+bool GameEngine::CanCraftTable() const
+{
+	return m_inventoryCounts[SlotWood] >= 4;
+}
+
 bool GameEngine::CanCraftSword() const
 {
 	return m_inventoryCounts[SlotWood] >= 2 && m_inventoryCounts[SlotStone] >= 3;
@@ -4824,7 +5812,7 @@ bool GameEngine::ShouldLeftClickAttack() const
 	int tileX = 0;
 	int tileY = 0;
 	if (!GetHoveredTile(tileX, tileY))
-		return true;
+		return false;
 
 	const int blockIndex = tileY * m_blockWidth + tileX;
 	return m_blocks[blockIndex].visible == 0;
@@ -5003,6 +5991,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		if (woodIndex >= 0 && woodIndex < static_cast<int>(m_blockBreaks.size()))
 			m_blockBreaks[woodIndex] = BlockBreakState();
 		MarkBlockIndexDirty(woodIndex);
+		PublishLocalTileEdit(woodIndex % m_blockWidth, woodIndex / m_blockWidth);
 	}
 
 	for (int leafIndex : leafIndices)
@@ -5012,6 +6001,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		if (leafIndex >= 0 && leafIndex < static_cast<int>(m_blockBreaks.size()))
 			m_blockBreaks[leafIndex] = BlockBreakState();
 		MarkBlockIndexDirty(leafIndex);
+		PublishLocalTileEdit(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
 	}
 
 	m_minimapDirty = true;
@@ -5081,9 +6071,20 @@ void GameEngine::SpawnLeafBreakEffect(int tileX, int tileY)
 	if (!IsTileInBounds(tileX, tileY))
 		return;
 
+	const unsigned int seed = HashUInt(GetTickCount() ^
+		(static_cast<unsigned int>(tileX) * 374761393u) ^
+		(static_cast<unsigned int>(tileY) * 668265263u));
+	SpawnLeafBreakEffectWithSeed(tileX, tileY, seed);
+	PublishLeafBreakEffect(tileX, tileY, seed);
+}
+
+void GameEngine::SpawnLeafBreakEffectWithSeed(int tileX, int tileY, unsigned int seed)
+{
+	if (!IsTileInBounds(tileX, tileY))
+		return;
+
 	constexpr int ShardCount = 4;
 	constexpr size_t MaxLeafParticles = 420;
-	const unsigned int seed = GetTickCount();
 	const float centerX = m_worldOriginX + tileX * m_tileSize;
 	const float centerY = m_worldOriginY - tileY * m_tileSize;
 
@@ -5199,11 +6200,17 @@ void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short til
 		return;
 
 	const float mergeDistance = m_tileSize * 1.35f;
+	const int pickupPlayerId = ChooseDroppedItemPickupPlayer(worldX, worldY);
 	if (mergeNearby)
 	{
 		for (DroppedItemState& item : m_droppedItems)
 		{
 			if (!item.alive || item.tileIndex != tileIndex)
+				continue;
+			if (m_networkMode != NetworkConfig::Mode::SinglePlayer && !IsNetworkItemOwnedByLocal(item))
+				continue;
+			const int existingPickupPlayerId = item.pickupPlayerId != 0 ? item.pickupPlayerId : m_localPlayerId;
+			if (existingPickupPlayerId != pickupPlayerId)
 				continue;
 
 			const float dx = item.x - worldX;
@@ -5212,8 +6219,11 @@ void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short til
 				continue;
 
 			item.amount += amount;
+			item.pickupPlayerId = pickupPlayerId;
 			item.pickupDelay = (std::max)(item.pickupDelay, 0.18f);
 			item.velocityY = (std::max)(item.velocityY, m_tileSize * 4.0f);
+			EnsureDroppedItemNetworkId(item);
+			PublishDroppedItemState(item);
 			return;
 		}
 	}
@@ -5223,6 +6233,7 @@ void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short til
 	item.y = worldY;
 	item.tileIndex = tileIndex;
 	item.amount = amount;
+	item.pickupPlayerId = pickupPlayerId;
 	item.alive = true;
 	item.pickupDelay = 0.24f;
 
@@ -5232,6 +6243,7 @@ void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short til
 	const float pop = Hash01(hashX + 13, hashY - 7, GetTickCount() + 91u);
 	item.velocityX = scatter * m_tileSize * 5.0f;
 	item.velocityY = m_tileSize * (4.4f + pop * 2.8f);
+	EnsureDroppedItemNetworkId(item);
 
 	for (DroppedItemState& existing : m_droppedItems)
 	{
@@ -5239,10 +6251,12 @@ void GameEngine::SpawnDroppedItem(float worldX, float worldY, unsigned short til
 			continue;
 
 		existing = item;
+		PublishDroppedItemState(existing);
 		return;
 	}
 
 	m_droppedItems.push_back(item);
+	PublishDroppedItemState(m_droppedItems.back());
 }
 
 void GameEngine::InitializeBlockChunkCache()
@@ -5331,6 +6345,1779 @@ void GameEngine::RebuildMonsterSpatialGrid()
 		m_monsterGridNext[i] = m_monsterGridHeads[cellIndex];
 		m_monsterGridHeads[cellIndex] = static_cast<int>(i);
 	}
+}
+
+void GameEngine::InitializeNetwork(const NetworkConfig& config)
+{
+	m_networkConfig = config;
+	m_networkMode = config.mode;
+	m_networkConnected = false;
+	m_networkSeedReady = false;
+	m_networkTime = 0.0f;
+	m_networkSendTimer = 0.0f;
+	m_networkHelloTimer = 0.0f;
+	m_networkItemSendTimer = 0.0f;
+	m_networkStatusTimer = 0.0f;
+	m_networkPeers.clear();
+	m_remotePlayers.clear();
+	m_remoteBlockBreaks.clear();
+	m_networkTileHistory.clear();
+	m_pendingNetworkTileEdits.clear();
+	m_pendingNetworkDroppedItems.clear();
+	m_nextNetworkPlayerId = 2;
+	m_localPlayerId = 1;
+	m_networkPlayerSequence = 0;
+	m_networkTileSequence = 0;
+	m_networkItemSequence = 0;
+	m_networkBreakingBlockIndex = -1;
+
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+	{
+		m_worldSeed = GetTickCount();
+		m_networkSeedReady = true;
+		return;
+	}
+
+	WSADATA wsaData = {};
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+	{
+		m_networkMode = NetworkConfig::Mode::SinglePlayer;
+		m_worldSeed = GetTickCount();
+		m_networkSeedReady = true;
+		return;
+	}
+	m_winsockStarted = true;
+
+	m_networkClientToken = HashUInt(GetTickCount() ^ static_cast<unsigned int>(reinterpret_cast<uintptr_t>(this)));
+	if (m_networkClientToken == 0)
+		m_networkClientToken = 1;
+
+	bool started = false;
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		started = StartNetworkHost(config.port);
+	else if (m_networkMode == NetworkConfig::Mode::Client)
+		started = StartNetworkClient(config.host.data(), config.port);
+
+	if (!started)
+	{
+		ShutdownNetwork();
+		m_networkMode = NetworkConfig::Mode::SinglePlayer;
+		m_worldSeed = GetTickCount();
+		m_networkSeedReady = true;
+	}
+}
+
+bool GameEngine::StartNetworkHost(unsigned short port)
+{
+	m_networkSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (m_networkSocket == INVALID_SOCKET)
+		return false;
+
+	sockaddr_in bindAddress = {};
+	bindAddress.sin_family = AF_INET;
+	bindAddress.sin_addr.s_addr = htonl(INADDR_ANY);
+	bindAddress.sin_port = htons(port);
+	if (bind(m_networkSocket, reinterpret_cast<const sockaddr*>(&bindAddress), sizeof(bindAddress)) == SOCKET_ERROR)
+		return false;
+
+	u_long nonBlocking = 1;
+	if (ioctlsocket(m_networkSocket, FIONBIO, &nonBlocking) == SOCKET_ERROR)
+		return false;
+
+	if (m_worldSeed == 0)
+		m_worldSeed = GetTickCount();
+	m_networkSeedReady = true;
+	m_networkConnected = true;
+	m_localPlayerId = 1;
+	RefreshLocalNetworkAddress();
+	return true;
+}
+
+bool GameEngine::StartNetworkClient(const char* host, unsigned short port)
+{
+	if (host == nullptr || host[0] == '\0')
+		return false;
+
+	m_networkSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (m_networkSocket == INVALID_SOCKET)
+		return false;
+
+	sockaddr_in bindAddress = {};
+	bindAddress.sin_family = AF_INET;
+	bindAddress.sin_addr.s_addr = htonl(INADDR_ANY);
+	bindAddress.sin_port = 0;
+	if (bind(m_networkSocket, reinterpret_cast<const sockaddr*>(&bindAddress), sizeof(bindAddress)) == SOCKET_ERROR)
+		return false;
+
+	u_long nonBlocking = 1;
+	if (ioctlsocket(m_networkSocket, FIONBIO, &nonBlocking) == SOCKET_ERROR)
+		return false;
+
+	m_networkServerAddress = {};
+	m_networkServerAddress.sin_family = AF_INET;
+	m_networkServerAddress.sin_port = htons(port);
+	if (InetPtonA(AF_INET, host, &m_networkServerAddress.sin_addr) != 1)
+	{
+		addrinfo hints = {};
+		hints.ai_family = AF_INET;
+		hints.ai_socktype = SOCK_DGRAM;
+		addrinfo* result = nullptr;
+		char portText[16] = {};
+		std::snprintf(portText, sizeof(portText), "%hu", port);
+		if (getaddrinfo(host, portText, &hints, &result) != 0 || result == nullptr)
+			return false;
+
+		m_networkServerAddress = *reinterpret_cast<sockaddr_in*>(result->ai_addr);
+		freeaddrinfo(result);
+	}
+
+	m_localPlayerId = 0;
+	SendNetworkHello();
+	return true;
+}
+
+bool GameEngine::WaitForNetworkSeed(float timeoutSeconds)
+{
+	const DWORD startTick = GetTickCount();
+	DWORD lastHelloTick = 0;
+	const DWORD timeoutMs = static_cast<DWORD>((std::max)(0.1f, timeoutSeconds) * 1000.0f);
+	while (!m_networkSeedReady && GetTickCount() - startTick < timeoutMs)
+	{
+		PollNetwork();
+		const DWORD now = GetTickCount();
+		if (now - lastHelloTick >= static_cast<DWORD>(NetworkHelloInterval * 1000.0f))
+		{
+			SendNetworkHello();
+			lastHelloTick = now;
+		}
+		Sleep(10);
+	}
+
+	return m_networkSeedReady;
+}
+
+void GameEngine::ShutdownNetwork()
+{
+	if (m_networkSocket != INVALID_SOCKET)
+	{
+		closesocket(m_networkSocket);
+		m_networkSocket = INVALID_SOCKET;
+	}
+
+	if (m_winsockStarted)
+	{
+		WSACleanup();
+		m_winsockStarted = false;
+	}
+
+	m_networkConnected = false;
+	m_networkSeedReady = false;
+	m_networkPeers.clear();
+	m_remotePlayers.clear();
+	m_remoteBlockBreaks.clear();
+	m_pendingNetworkTileEdits.clear();
+	m_pendingNetworkDroppedItems.clear();
+	m_networkBreakingBlockIndex = -1;
+}
+
+void GameEngine::UpdateStartMenu(float deltaTime)
+{
+	(void)deltaTime;
+	if (m_input == nullptr)
+		return;
+
+	if (IsKeyDown(VK_LBUTTON))
+	{
+		float cursorX = 0.0f;
+		float cursorY = 0.0f;
+		if (GetCursorViewPosition(cursorX, cursorY))
+		{
+			const int action = GetStartMenuActionAt(cursorX, cursorY);
+			m_startJoinHostEditing = action == StartMenuActionInput;
+			if (action == StartMenuActionSingle)
+			{
+				m_networkConfig.mode = NetworkConfig::Mode::SinglePlayer;
+				m_startJoinHostEditing = false;
+				SetMultiplayerMenuStatus("싱글플레이 선택됨");
+			}
+			else if (action == StartMenuActionHost)
+			{
+				m_networkConfig.mode = NetworkConfig::Mode::Host;
+				m_startJoinHostEditing = false;
+				SetMultiplayerMenuStatus("호스트 선택됨");
+			}
+			else if (action == StartMenuActionJoin)
+			{
+				m_networkConfig.mode = NetworkConfig::Mode::Client;
+				m_startJoinHostEditing = true;
+				SetMultiplayerMenuStatus("참가 선택됨");
+			}
+			else if (action == StartMenuActionStart)
+			{
+				BeginSelectedGameFromMenu();
+			}
+		}
+	}
+
+	if (IsKeyDown(VK_RETURN))
+	{
+		if (!m_startJoinHostEditing)
+			BeginSelectedGameFromMenu();
+		else if (m_networkConfig.mode == NetworkConfig::Mode::Client && m_multiplayerJoinHost[0] != '\0')
+			BeginSelectedGameFromMenu();
+		return;
+	}
+
+	if (!m_startJoinHostEditing)
+		return;
+
+	if ((IsKeyHeld(VK_CONTROL) || IsKeyHeld(VK_LCONTROL) || IsKeyHeld(VK_RCONTROL)) &&
+		IsKeyDown(0x56))
+	{
+		PasteMultiplayerJoinHostFromClipboard();
+		return;
+	}
+
+	if (IsKeyDown(VK_BACK))
+	{
+		const size_t length = std::strlen(m_multiplayerJoinHost.data());
+		if (length > 0)
+			m_multiplayerJoinHost[length - 1] = '\0';
+		return;
+	}
+
+	for (int digit = 0; digit <= 9; ++digit)
+	{
+		if (IsKeyDown(0x30 + digit) || IsKeyDown(VK_NUMPAD0 + digit))
+		{
+			AppendMultiplayerJoinHostChar(static_cast<char>('0' + digit));
+			return;
+		}
+	}
+
+	if (IsKeyDown(VK_OEM_PERIOD) || IsKeyDown(VK_DECIMAL))
+	{
+		AppendMultiplayerJoinHostChar('.');
+		return;
+	}
+
+	if (IsKeyDown(VK_OEM_MINUS) || IsKeyDown(VK_SUBTRACT))
+	{
+		AppendMultiplayerJoinHostChar('-');
+		return;
+	}
+
+	for (int letter = 0; letter < 26; ++letter)
+	{
+		const int keyCode = 0x41 + letter;
+		if (IsKeyDown(keyCode))
+		{
+			AppendMultiplayerJoinHostChar(static_cast<char>('A' + letter));
+			return;
+		}
+	}
+}
+
+void GameEngine::DrawStartMenu()
+{
+	const float viewHalfWidth = GetViewHalfWidth();
+	const float viewHalfHeight = GetViewHalfHeight();
+	DrawSolidRect(0.0f, 0.0f, viewHalfWidth * 2.0f, viewHalfHeight * 2.0f,
+		0.0f, 0.0f, 0.0f, 1.0f, -3.0f);
+
+	UiRect panel;
+	panel.width = std::clamp(viewHalfWidth * 1.18f, 500.0f, 650.0f);
+	panel.height = 382.0f;
+	panel.left = -panel.width * 0.5f;
+	panel.top = panel.height * 0.5f + 12.0f;
+	DrawUiPanel(panel, "시작");
+
+	DrawUiText(panel.left + 26.0f, panel.top - 38.0f, "D3D 모험", 3.0f,
+		0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
+	DrawUiText(panel.left + 28.0f, panel.top - 67.0f, "싱글플레이 또는 멀티플레이를 고르고 시작", 1.35f,
+		0.62f, 0.70f, 0.60f, 1.0f, -8.0f);
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
+	const int hoverAction = hasCursor ? GetStartMenuActionAt(cursorX, cursorY) : MultiplayerActionNone;
+	const NetworkConfig::Mode selectedMode = m_networkConfig.mode;
+
+	auto drawChoice = [&](float centerX, float centerY, float width, float height, const char* text, int action, bool selected)
+	{
+		const bool hovered = hoverAction == action;
+		DrawSolidRect(centerX, centerY, width, height,
+			selected ? 0.78f : (hovered ? 0.105f : 0.060f),
+			selected ? 0.86f : (hovered ? 0.130f : 0.070f),
+			selected ? 0.74f : (hovered ? 0.095f : 0.075f),
+			0.98f, -6.2f);
+
+		RectOutlineDesc outline;
+		outline.positionX = centerX;
+		outline.positionY = centerY;
+		outline.width = width;
+		outline.height = height;
+		outline.thickness = selected ? 2.3f : (hovered ? 1.8f : 1.2f);
+		outline.colorR = hovered || selected ? 0.82f : 0.42f;
+		outline.colorG = hovered || selected ? 0.88f : 0.48f;
+		outline.colorB = hovered || selected ? 0.78f : 0.42f;
+		outline.colorA = 0.96f;
+		outline.depth = -7.4f;
+		m_renderer->DrawRectOutline(outline);
+
+		DrawCenteredUiText(centerX, centerY + 6.0f, text, 1.55f,
+			selected ? 0.055f : 0.84f,
+			selected ? 0.050f : 0.90f,
+			selected ? 0.070f : 0.80f,
+			1.0f, -8.0f);
+	};
+
+	const float choiceWidth = (panel.width - 68.0f) / 3.0f;
+	const float choiceY = panel.top - 124.0f;
+	drawChoice(panel.left + 24.0f + choiceWidth * 0.5f, choiceY, choiceWidth, 42.0f,
+		"싱글플레이", StartMenuActionSingle, selectedMode == NetworkConfig::Mode::SinglePlayer);
+	drawChoice(panel.left + 34.0f + choiceWidth * 1.5f, choiceY, choiceWidth, 42.0f,
+		"호스트", StartMenuActionHost, selectedMode == NetworkConfig::Mode::Host);
+	drawChoice(panel.left + 44.0f + choiceWidth * 2.5f, choiceY, choiceWidth, 42.0f,
+		"참가", StartMenuActionJoin, selectedMode == NetworkConfig::Mode::Client);
+
+	DrawUiText(panel.left + 28.0f, panel.top - 175.0f, "호스트 주소", 1.25f,
+		selectedMode == NetworkConfig::Mode::Client ? 0.82f : 0.42f,
+		selectedMode == NetworkConfig::Mode::Client ? 0.88f : 0.48f,
+		selectedMode == NetworkConfig::Mode::Client ? 0.78f : 0.42f,
+		1.0f, -8.0f);
+
+	const float inputWidth = panel.width - 56.0f;
+	const float inputCenterX = panel.left + panel.width * 0.5f;
+	const float inputCenterY = panel.top - 198.0f;
+	const bool inputHovered = hoverAction == StartMenuActionInput;
+	const bool inputActive = selectedMode == NetworkConfig::Mode::Client;
+	DrawSolidRect(inputCenterX, inputCenterY, inputWidth, 34.0f,
+		m_startJoinHostEditing ? 0.105f : (inputHovered && inputActive ? 0.090f : 0.060f),
+		m_startJoinHostEditing ? 0.130f : (inputHovered && inputActive ? 0.110f : 0.070f),
+		m_startJoinHostEditing ? 0.095f : (inputHovered && inputActive ? 0.090f : 0.075f),
+		inputActive ? 0.98f : 0.46f, -6.2f);
+
+	RectOutlineDesc inputOutline;
+	inputOutline.positionX = inputCenterX;
+	inputOutline.positionY = inputCenterY;
+	inputOutline.width = inputWidth;
+	inputOutline.height = 34.0f;
+	inputOutline.thickness = m_startJoinHostEditing ? 2.0f : 1.2f;
+	inputOutline.colorR = inputActive ? 0.82f : 0.42f;
+	inputOutline.colorG = inputActive ? 0.88f : 0.48f;
+	inputOutline.colorB = inputActive ? 0.78f : 0.42f;
+	inputOutline.colorA = inputActive ? 0.96f : 0.46f;
+	inputOutline.depth = -7.5f;
+	m_renderer->DrawRectOutline(inputOutline);
+
+	char inputText[72] = {};
+	std::snprintf(inputText, sizeof(inputText), "%s%s", m_multiplayerJoinHost.data(), m_startJoinHostEditing ? "-" : "");
+	DrawUiText(inputCenterX - inputWidth * 0.5f + 12.0f, inputCenterY + 6.0f, inputText, 1.55f,
+		inputActive ? 0.86f : 0.48f, inputActive ? 0.92f : 0.52f, inputActive ? 0.80f : 0.48f,
+		1.0f, -8.0f);
+
+	const float startY = panel.top - 266.0f;
+	drawChoice(inputCenterX, startY, 220.0f, 48.0f, "게임 시작", StartMenuActionStart, false);
+
+	if (m_multiplayerMenuStatus[0] != '\0')
+		DrawUiText(panel.left + 28.0f, panel.top - 326.0f, m_multiplayerMenuStatus.data(), 1.35f,
+			0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
+
+	DrawUiText(panel.left + 28.0f, panel.top - 352.0f, "엔터 시작 / 참가 주소 클릭 후 입력 / 컨트롤+V 붙여넣기", 1.15f,
+		0.52f, 0.58f, 0.50f, 1.0f, -8.0f);
+}
+
+void GameEngine::BeginSelectedGameFromMenu()
+{
+	if (m_gameStarted)
+		return;
+
+	NetworkConfig config = m_networkConfig;
+	if (config.mode == NetworkConfig::Mode::Client)
+	{
+		if (m_multiplayerJoinHost[0] == '\0')
+		{
+			SetMultiplayerMenuStatus("호스트 주소를 입력하세요");
+			m_startJoinHostEditing = true;
+			return;
+		}
+
+		std::snprintf(config.host.data(), config.host.size(), "%s", m_multiplayerJoinHost.data());
+	}
+
+	if (m_networkMode != NetworkConfig::Mode::SinglePlayer || m_networkSocket != INVALID_SOCKET)
+		ShutdownNetwork();
+
+	m_worldSeed = 0;
+	InitializeNetwork(config);
+	m_networkConfig = config;
+
+	if (config.mode == NetworkConfig::Mode::SinglePlayer)
+	{
+		InitializeWorld();
+		m_gameStarted = true;
+		m_multiplayerMenuOpen = false;
+		m_startJoinHostEditing = false;
+		SetStatusText("싱글플레이 시작", 1.8f);
+		return;
+	}
+
+	if (config.mode == NetworkConfig::Mode::Host)
+	{
+		if (m_networkMode == NetworkConfig::Mode::Host && m_networkConnected)
+		{
+			InitializeWorld();
+			m_gameStarted = true;
+			m_multiplayerMenuOpen = false;
+			m_startJoinHostEditing = false;
+			RefreshLocalNetworkAddress();
+			CopyTextToClipboard(m_localNetworkAddress.data());
+			char status[64] = {};
+			std::snprintf(status, sizeof(status), "호스트 중 %s", m_localNetworkAddress.data());
+			SetMultiplayerMenuStatus(status);
+			SetStatusText("호스트 준비됨", 2.0f);
+			return;
+		}
+
+		SetMultiplayerMenuStatus("호스트 실패");
+		return;
+	}
+
+	if (config.mode == NetworkConfig::Mode::Client)
+	{
+		if (m_networkMode == NetworkConfig::Mode::Client)
+		{
+			SetMultiplayerMenuStatus("호스트 참가 중");
+			SetStatusText("호스트 참가 중", 1.4f);
+			return;
+		}
+
+		SetMultiplayerMenuStatus("참가 실패");
+	}
+}
+
+int GameEngine::GetStartMenuActionAt(float viewX, float viewY) const
+{
+	const float viewHalfWidth = GetViewHalfWidth();
+	UiRect panel;
+	panel.width = std::clamp(viewHalfWidth * 1.18f, 500.0f, 650.0f);
+	panel.height = 382.0f;
+	panel.left = -panel.width * 0.5f;
+	panel.top = panel.height * 0.5f + 12.0f;
+	const float panelCenterX = panel.left + panel.width * 0.5f;
+	const float panelCenterY = panel.top - panel.height * 0.5f;
+	if (!IsPointInsideRect(viewX, viewY, panelCenterX, panelCenterY, panel.width, panel.height))
+		return MultiplayerActionNone;
+
+	const float choiceWidth = (panel.width - 68.0f) / 3.0f;
+	const float choiceY = panel.top - 124.0f;
+	if (IsPointInsideRect(viewX, viewY, panel.left + 24.0f + choiceWidth * 0.5f, choiceY, choiceWidth, 42.0f))
+		return StartMenuActionSingle;
+	if (IsPointInsideRect(viewX, viewY, panel.left + 34.0f + choiceWidth * 1.5f, choiceY, choiceWidth, 42.0f))
+		return StartMenuActionHost;
+	if (IsPointInsideRect(viewX, viewY, panel.left + 44.0f + choiceWidth * 2.5f, choiceY, choiceWidth, 42.0f))
+		return StartMenuActionJoin;
+
+	if (m_networkConfig.mode == NetworkConfig::Mode::Client &&
+		IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 198.0f, panel.width - 56.0f, 34.0f))
+	{
+		return StartMenuActionInput;
+	}
+
+	if (IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 266.0f, 220.0f, 48.0f))
+		return StartMenuActionStart;
+
+	return MultiplayerActionNone;
+}
+
+void GameEngine::UpdateMultiplayerMenu(float deltaTime)
+{
+	(void)deltaTime;
+	if (m_input == nullptr)
+		return;
+
+	if (IsKeyDown(VK_ESCAPE))
+	{
+		m_multiplayerMenuOpen = false;
+		m_multiplayerJoinHostEditing = false;
+		return;
+	}
+
+	if (IsKeyDown(VK_LBUTTON))
+	{
+		float cursorX = 0.0f;
+		float cursorY = 0.0f;
+		if (GetCursorViewPosition(cursorX, cursorY))
+		{
+			const int action = GetMultiplayerMenuActionAt(cursorX, cursorY);
+			m_multiplayerJoinHostEditing = action == MultiplayerActionInput;
+			if (action == MultiplayerActionHost)
+			{
+				TryBeginMenuHost();
+			}
+			else if (action == MultiplayerActionJoin)
+			{
+				TryBeginMenuJoin();
+			}
+			else if (action == MultiplayerActionClose)
+			{
+				m_multiplayerMenuOpen = false;
+				m_multiplayerJoinHostEditing = false;
+			}
+			else if (action == MultiplayerActionCopyIp)
+			{
+				RefreshLocalNetworkAddress();
+				if (CopyTextToClipboard(m_localNetworkAddress.data()))
+					SetMultiplayerMenuStatus("주소 복사됨");
+				else
+					SetMultiplayerMenuStatus("복사 실패");
+			}
+		}
+	}
+
+	if (!m_multiplayerJoinHostEditing)
+		return;
+
+	if ((IsKeyHeld(VK_CONTROL) || IsKeyHeld(VK_LCONTROL) || IsKeyHeld(VK_RCONTROL)) &&
+		IsKeyDown(0x56))
+	{
+		PasteMultiplayerJoinHostFromClipboard();
+		return;
+	}
+
+	if (IsKeyDown(VK_BACK))
+	{
+		const size_t length = std::strlen(m_multiplayerJoinHost.data());
+		if (length > 0)
+			m_multiplayerJoinHost[length - 1] = '\0';
+		return;
+	}
+
+	if (IsKeyDown(VK_RETURN))
+	{
+		TryBeginMenuJoin();
+		return;
+	}
+
+	for (int digit = 0; digit <= 9; ++digit)
+	{
+		if (IsKeyDown(0x30 + digit) || IsKeyDown(VK_NUMPAD0 + digit))
+		{
+			AppendMultiplayerJoinHostChar(static_cast<char>('0' + digit));
+			return;
+		}
+	}
+
+	if (IsKeyDown(VK_OEM_PERIOD) || IsKeyDown(VK_DECIMAL))
+	{
+		AppendMultiplayerJoinHostChar('.');
+		return;
+	}
+
+	if (IsKeyDown(VK_OEM_MINUS) || IsKeyDown(VK_SUBTRACT))
+	{
+		AppendMultiplayerJoinHostChar('-');
+		return;
+	}
+
+	for (int letter = 0; letter < 26; ++letter)
+	{
+		const int keyCode = 0x41 + letter;
+		if (IsKeyDown(keyCode))
+		{
+			AppendMultiplayerJoinHostChar(static_cast<char>('A' + letter));
+			return;
+		}
+	}
+}
+
+void GameEngine::DrawMultiplayerMenu()
+{
+	if (!m_multiplayerMenuOpen)
+		return;
+
+	const UiRect panel = GetRightPanelRect(2);
+	DrawUiPanel(panel, "멀티");
+	const float panelLeft = panel.left;
+	const float panelTop = panel.top;
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
+	const int hoverAction = hasCursor ? GetMultiplayerMenuActionAt(cursorX, cursorY) : MultiplayerActionNone;
+
+	auto drawButton = [&](float centerX, float centerY, float width, float height, const char* text, int action)
+	{
+		const bool hovered = hoverAction == action;
+		DrawSolidRect(centerX, centerY, width, height,
+			hovered ? 0.78f : 0.060f,
+			hovered ? 0.86f : 0.070f,
+			hovered ? 0.74f : 0.075f,
+			0.96f, -9.5f);
+
+		RectOutlineDesc buttonOutline;
+		buttonOutline.positionX = centerX;
+		buttonOutline.positionY = centerY;
+		buttonOutline.width = width;
+		buttonOutline.height = height;
+		buttonOutline.thickness = hovered ? 2.2f : 1.4f;
+		buttonOutline.colorR = hovered ? 0.82f : 0.42f;
+		buttonOutline.colorG = hovered ? 0.88f : 0.48f;
+		buttonOutline.colorB = hovered ? 0.78f : 0.42f;
+		buttonOutline.colorA = 0.95f;
+		buttonOutline.depth = -10.0f;
+		m_renderer->DrawRectOutline(buttonOutline);
+
+		DrawCenteredUiText(centerX, centerY + 5.0f, text, 1.30f,
+			hovered ? 0.055f : 0.84f,
+			hovered ? 0.050f : 0.90f,
+			hovered ? 0.070f : 0.80f,
+			1.0f, -10.2f);
+	};
+
+	const float buttonWidth = (panel.width - 31.0f) * 0.5f;
+	drawButton(panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 42.0f, buttonWidth, 24.0f, "호스트", MultiplayerActionHost);
+	drawButton(panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 42.0f, buttonWidth, 24.0f, "참가", MultiplayerActionJoin);
+
+	DrawUiText(panelLeft + 12.0f, panelTop - 66.0f, "호스트 주소", 1.15f,
+		0.82f, 0.88f, 0.78f, 1.0f, -10.0f);
+
+	const float inputCenterX = panelLeft + panel.width * 0.5f;
+	const float inputCenterY = panelTop - 83.0f;
+	const float inputWidth = panel.width - 24.0f;
+	const float inputHeight = 24.0f;
+	const bool inputHovered = hoverAction == MultiplayerActionInput;
+	DrawSolidRect(inputCenterX, inputCenterY, inputWidth, inputHeight,
+		m_multiplayerJoinHostEditing ? 0.105f : (inputHovered ? 0.090f : 0.060f),
+		m_multiplayerJoinHostEditing ? 0.130f : (inputHovered ? 0.110f : 0.070f),
+		m_multiplayerJoinHostEditing ? 0.095f : (inputHovered ? 0.090f : 0.075f),
+		0.98f, -9.5f);
+
+	RectOutlineDesc inputOutline;
+	inputOutline.positionX = inputCenterX;
+	inputOutline.positionY = inputCenterY;
+	inputOutline.width = inputWidth;
+	inputOutline.height = inputHeight;
+	inputOutline.thickness = m_multiplayerJoinHostEditing ? 2.0f : 1.3f;
+	inputOutline.colorR = 0.82f;
+	inputOutline.colorG = 0.88f;
+	inputOutline.colorB = 0.78f;
+	inputOutline.colorA = 0.96f;
+	inputOutline.depth = -10.0f;
+	m_renderer->DrawRectOutline(inputOutline);
+
+	char inputText[72] = {};
+	std::snprintf(inputText, sizeof(inputText), "%s%s", m_multiplayerJoinHost.data(), m_multiplayerJoinHostEditing ? "-" : "");
+	DrawUiText(inputCenterX - inputWidth * 0.5f + 9.0f, inputCenterY + 5.0f, inputText, 1.24f,
+		0.86f, 0.92f, 0.80f, 1.0f, -10.2f);
+
+	char localIpText[80] = {};
+	std::snprintf(localIpText, sizeof(localIpText), "내 주소 %s", m_localNetworkAddress[0] != '\0' ? m_localNetworkAddress.data() : "호스트 먼저");
+	DrawUiText(panelLeft + 12.0f, panelTop - 105.0f, localIpText, 1.12f,
+		0.72f, 0.82f, 0.68f, 1.0f, -10.0f);
+	drawButton(panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 129.0f, buttonWidth, 22.0f, "주소 복사", MultiplayerActionCopyIp);
+	drawButton(panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 129.0f, buttonWidth, 22.0f, "닫기", MultiplayerActionClose);
+
+	if (m_multiplayerMenuStatus[0] != '\0')
+	{
+		DrawUiText(panelLeft + 12.0f, panelTop - panel.height + 18.0f, m_multiplayerMenuStatus.data(), 1.12f,
+			0.86f, 0.92f, 0.80f, 1.0f, -10.0f);
+	}
+}
+
+void GameEngine::SetMultiplayerMenuStatus(const char* text)
+{
+	if (text == nullptr)
+	{
+		m_multiplayerMenuStatus[0] = '\0';
+		return;
+	}
+
+	std::snprintf(m_multiplayerMenuStatus.data(), m_multiplayerMenuStatus.size(), "%s", text);
+}
+
+void GameEngine::TryBeginMenuHost()
+{
+	if (m_networkMode != NetworkConfig::Mode::SinglePlayer || m_networkSocket != INVALID_SOCKET)
+		ShutdownNetwork();
+
+	NetworkConfig config;
+	config.mode = NetworkConfig::Mode::Host;
+	config.port = 27015;
+	InitializeNetwork(config);
+	if (m_networkMode == NetworkConfig::Mode::Host && m_networkConnected)
+	{
+		RefreshLocalNetworkAddress();
+		CopyTextToClipboard(m_localNetworkAddress.data());
+		char status[64] = {};
+		std::snprintf(status, sizeof(status), "호스트 중 %s", m_localNetworkAddress.data());
+		SetMultiplayerMenuStatus(status);
+		SetStatusText("호스트 준비됨", 1.8f);
+		return;
+	}
+
+	SetMultiplayerMenuStatus("호스트 실패");
+}
+
+void GameEngine::TryBeginMenuJoin()
+{
+	const char* host = m_multiplayerJoinHost.data();
+	if (host == nullptr || host[0] == '\0')
+	{
+		SetMultiplayerMenuStatus("호스트 주소를 입력하세요");
+		return;
+	}
+
+	if (m_networkMode != NetworkConfig::Mode::SinglePlayer || m_networkSocket != INVALID_SOCKET)
+		ShutdownNetwork();
+
+	NetworkConfig config;
+	config.mode = NetworkConfig::Mode::Client;
+	config.port = 27015;
+	std::snprintf(config.host.data(), config.host.size(), "%s", host);
+	InitializeNetwork(config);
+	if (m_networkMode == NetworkConfig::Mode::Client)
+	{
+		SetMultiplayerMenuStatus("호스트 참가 중");
+		SetStatusText("호스트 참가 중", 1.4f);
+		return;
+	}
+
+	SetMultiplayerMenuStatus("참가 실패");
+}
+
+void GameEngine::AppendMultiplayerJoinHostChar(char value)
+{
+	if (!IsHostInputCharacter(value))
+		return;
+
+	const size_t length = std::strlen(m_multiplayerJoinHost.data());
+	if (length + 1 >= m_multiplayerJoinHost.size())
+		return;
+
+	m_multiplayerJoinHost[length] = value;
+	m_multiplayerJoinHost[length + 1] = '\0';
+}
+
+void GameEngine::PasteMultiplayerJoinHostFromClipboard()
+{
+	if (!OpenClipboard(nullptr))
+		return;
+
+	HANDLE clipboardData = GetClipboardData(CF_TEXT);
+	if (clipboardData == nullptr)
+	{
+		CloseClipboard();
+		return;
+	}
+
+	const char* text = static_cast<const char*>(GlobalLock(clipboardData));
+	if (text == nullptr)
+	{
+		CloseClipboard();
+		return;
+	}
+
+	m_multiplayerJoinHost[0] = '\0';
+	for (const char* cursor = text; *cursor != '\0'; ++cursor)
+	{
+		if (!IsHostInputCharacter(*cursor))
+			continue;
+
+		AppendMultiplayerJoinHostChar(*cursor);
+		if (std::strlen(m_multiplayerJoinHost.data()) + 1 >= m_multiplayerJoinHost.size())
+			break;
+	}
+
+	GlobalUnlock(clipboardData);
+	CloseClipboard();
+	SetMultiplayerMenuStatus("붙여넣음");
+}
+
+int GameEngine::GetMultiplayerMenuActionAt(float viewX, float viewY) const
+{
+	const UiRect panel = GetRightPanelRect(2);
+	const float panelCenterX = panel.left + panel.width * 0.5f;
+	const float panelCenterY = panel.top - panel.height * 0.5f;
+	const float panelLeft = panel.left;
+	const float panelTop = panel.top;
+	const float buttonWidth = (panel.width - 31.0f) * 0.5f;
+
+	if (!IsPointInsideRect(viewX, viewY, panelCenterX, panelCenterY, panel.width, panel.height))
+		return MultiplayerActionNone;
+
+	if (IsPointInsideRect(viewX, viewY, panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 42.0f, buttonWidth, 24.0f))
+		return MultiplayerActionHost;
+	if (IsPointInsideRect(viewX, viewY, panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 42.0f, buttonWidth, 24.0f))
+		return MultiplayerActionJoin;
+	if (IsPointInsideRect(viewX, viewY, panelLeft + panel.width * 0.5f, panelTop - 83.0f, panel.width - 24.0f, 24.0f))
+		return MultiplayerActionInput;
+	if (IsPointInsideRect(viewX, viewY, panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 129.0f, buttonWidth, 22.0f))
+		return MultiplayerActionCopyIp;
+	if (IsPointInsideRect(viewX, viewY, panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 129.0f, buttonWidth, 22.0f))
+		return MultiplayerActionClose;
+
+	return MultiplayerActionNone;
+}
+
+bool GameEngine::IsPointInsideRect(float pointX, float pointY, float centerX, float centerY, float width, float height) const
+{
+	return pointX >= centerX - width * 0.5f &&
+		pointX <= centerX + width * 0.5f &&
+		pointY >= centerY - height * 0.5f &&
+		pointY <= centerY + height * 0.5f;
+}
+
+void GameEngine::RefreshLocalNetworkAddress()
+{
+	std::snprintf(m_localNetworkAddress.data(), m_localNetworkAddress.size(), "127.0.0.1");
+
+	bool temporaryWinsock = false;
+	if (!m_winsockStarted)
+	{
+		WSADATA wsaData = {};
+		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+			return;
+		temporaryWinsock = true;
+	}
+
+	char hostName[256] = {};
+	if (gethostname(hostName, sizeof(hostName)) == 0)
+	{
+		addrinfo hints = {};
+		hints.ai_family = AF_INET;
+		addrinfo* results = nullptr;
+		if (getaddrinfo(hostName, nullptr, &hints, &results) == 0)
+		{
+			for (addrinfo* cursor = results; cursor != nullptr; cursor = cursor->ai_next)
+			{
+				if (cursor->ai_family != AF_INET || cursor->ai_addr == nullptr)
+					continue;
+
+				const sockaddr_in* address = reinterpret_cast<const sockaddr_in*>(cursor->ai_addr);
+				char addressText[INET_ADDRSTRLEN] = {};
+				const char* text = InetNtopA(AF_INET, const_cast<IN_ADDR*>(&address->sin_addr), addressText, sizeof(addressText));
+				if (text == nullptr || addressText[0] == '\0')
+					continue;
+				if (std::strncmp(addressText, "127.", 4) == 0 || std::strncmp(addressText, "169.254.", 8) == 0)
+					continue;
+
+				std::snprintf(m_localNetworkAddress.data(), m_localNetworkAddress.size(), "%s", addressText);
+				break;
+			}
+			freeaddrinfo(results);
+		}
+	}
+
+	if (temporaryWinsock)
+		WSACleanup();
+}
+
+void GameEngine::PollNetwork()
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET)
+		return;
+
+	for (int packetCount = 0; packetCount < 96; ++packetCount)
+	{
+		char buffer[1200] = {};
+		sockaddr_in from = {};
+		int fromLength = sizeof(from);
+		const int received = recvfrom(
+			m_networkSocket,
+			buffer,
+			static_cast<int>(sizeof(buffer)),
+			0,
+			reinterpret_cast<sockaddr*>(&from),
+			&fromLength);
+		if (received == SOCKET_ERROR)
+		{
+			const int error = WSAGetLastError();
+			if (error == WSAEWOULDBLOCK)
+				break;
+			break;
+		}
+
+		if (received >= static_cast<int>(sizeof(NetworkPacketHeader)))
+			HandleNetworkPacket(buffer, received, from);
+	}
+}
+
+void GameEngine::UpdateNetwork(float deltaTime)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return;
+
+	m_networkTime += deltaTime;
+	PollNetwork();
+
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+	{
+		m_networkHelloTimer += deltaTime;
+		if (m_networkHelloTimer >= NetworkHelloInterval)
+		{
+			m_networkHelloTimer = 0.0f;
+			SendNetworkHello();
+		}
+		return;
+	}
+
+	for (RemotePlayerState& remotePlayer : m_remotePlayers)
+	{
+		if (remotePlayer.active && m_networkTime - remotePlayer.lastHeardTime > NetworkRemoteTimeout)
+			remotePlayer.active = false;
+	}
+
+	for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	{
+		if (remoteBreak.active && m_networkTime - remoteBreak.lastHeardTime > NetworkBlockBreakRemoteTimeout)
+			remoteBreak.active = false;
+	}
+
+	m_networkSendTimer += deltaTime;
+	if (m_networkSendTimer >= NetworkPlayerSendInterval)
+	{
+		m_networkSendTimer = 0.0f;
+		SendLocalPlayerState();
+	}
+
+	m_networkItemSendTimer += deltaTime;
+	if (m_networkItemSendTimer >= NetworkItemSendInterval)
+	{
+		m_networkItemSendTimer = 0.0f;
+		SendOwnedDroppedItemStates();
+	}
+}
+
+void GameEngine::SendNetworkHello()
+{
+	if (m_networkMode != NetworkConfig::Mode::Client || m_networkSocket == INVALID_SOCKET)
+		return;
+
+	NetworkHelloPacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::Hello, sizeof(packet));
+	packet.token = m_networkClientToken;
+	SendNetworkPacket(m_networkServerAddress, &packet, sizeof(packet));
+}
+
+void GameEngine::SendLocalPlayerState()
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET)
+		return;
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		return;
+
+	NetworkPlayerStatePacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::PlayerState, sizeof(packet));
+	packet.sequence = ++m_networkPlayerSequence;
+	packet.playerId = m_localPlayerId;
+	packet.x = m_player.x;
+	packet.y = m_player.y;
+	packet.velocityX = m_player.velocityX;
+	packet.velocityY = m_player.velocityY;
+	packet.animationTime = m_player.animationTime;
+	packet.attackTimer = m_attackTimer;
+	packet.facing = m_player.facing;
+	packet.health = m_playerHealth;
+	packet.selectedInventorySlot = m_selectedInventorySlot;
+	packet.onGround = m_player.onGround ? 1 : 0;
+
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		BroadcastNetworkPacket(&packet, sizeof(packet));
+	else
+		SendNetworkPacket(m_networkServerAddress, &packet, sizeof(packet));
+}
+
+void GameEngine::SendWelcomePacket(const sockaddr_in& address, int playerId, unsigned int token)
+{
+	NetworkWelcomePacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::Welcome, sizeof(packet));
+	packet.token = token;
+	packet.playerId = playerId;
+	packet.worldSeed = m_worldSeed;
+	packet.blockWidth = m_blockWidth;
+	packet.blockHeight = m_blockHeight;
+	packet.spawnX = m_playerSpawnX;
+	packet.spawnY = m_playerSpawnY;
+	SendNetworkPacket(address, &packet, sizeof(packet));
+
+	for (const NetworkTileEditState& edit : m_networkTileHistory)
+		SendTileEditPacket(edit.tileX, edit.tileY, edit.tileIndex, edit.visible, edit.sequence, &address);
+
+	for (DroppedItemState& item : m_droppedItems)
+	{
+		if (!item.alive)
+			continue;
+
+		EnsureDroppedItemNetworkId(item);
+		const int itemOwnerId = static_cast<int>((item.networkId >> 24) & 0xFFu);
+		SendDroppedItemPacket(item, itemOwnerId > 0 ? itemOwnerId : m_localPlayerId, &address);
+	}
+}
+
+void GameEngine::SendTileEditPacket(int tileX, int tileY, unsigned short tileIndex, unsigned char visible, unsigned int sequence, const sockaddr_in* targetAddress)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET)
+		return;
+
+	NetworkTileEditPacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::TileEdit, sizeof(packet));
+	packet.sequence = sequence;
+	packet.playerId = m_localPlayerId;
+	packet.tileX = tileX;
+	packet.tileY = tileY;
+	packet.tileIndex = tileIndex;
+	packet.visible = visible;
+
+	if (targetAddress != nullptr)
+	{
+		SendNetworkPacket(*targetAddress, &packet, sizeof(packet));
+		return;
+	}
+
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		BroadcastNetworkPacket(&packet, sizeof(packet));
+	else if (m_networkConnected)
+		SendNetworkPacket(m_networkServerAddress, &packet, sizeof(packet));
+}
+
+void GameEngine::BroadcastTileEdit(int tileX, int tileY, unsigned short tileIndex, unsigned char visible)
+{
+	if (m_networkMode != NetworkConfig::Mode::Host)
+		return;
+
+	const unsigned int sequence = ++m_networkTileSequence;
+	NetworkTileEditState edit;
+	edit.tileX = tileX;
+	edit.tileY = tileY;
+	edit.tileIndex = tileIndex;
+	edit.visible = visible;
+	edit.sequence = sequence;
+	m_networkTileHistory.push_back(edit);
+	SendTileEditPacket(tileX, tileY, tileIndex, visible, sequence, nullptr);
+}
+
+void GameEngine::PublishLocalTileEdit(int tileX, int tileY)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || !IsTileInBounds(tileX, tileY))
+		return;
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		return;
+
+	const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+	if (m_networkMode == NetworkConfig::Mode::Host)
+	{
+		BroadcastTileEdit(tileX, tileY, tile.tileIndex, tile.visible);
+		return;
+	}
+
+	SendTileEditPacket(tileX, tileY, tile.tileIndex, tile.visible, ++m_networkTileSequence, nullptr);
+}
+
+void GameEngine::ApplyNetworkTileEdit(int tileX, int tileY, unsigned short tileIndex, unsigned char visible)
+{
+	if (!IsTileInBounds(tileX, tileY))
+		return;
+
+	if (m_blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
+	{
+		NetworkTileEditState edit;
+		edit.tileX = tileX;
+		edit.tileY = tileY;
+		edit.tileIndex = tileIndex;
+		edit.visible = visible;
+		m_pendingNetworkTileEdits.push_back(edit);
+		return;
+	}
+
+	const int blockIndex = tileY * m_blockWidth + tileX;
+	m_blocks[blockIndex].tileIndex = tileIndex;
+	m_blocks[blockIndex].visible = visible != 0 ? 1 : 0;
+	if (blockIndex >= 0 && blockIndex < static_cast<int>(m_blockBreaks.size()))
+		m_blockBreaks[blockIndex] = BlockBreakState();
+	for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	{
+		if (remoteBreak.tileX == tileX && remoteBreak.tileY == tileY)
+			remoteBreak.active = false;
+	}
+	MarkBlockChunkDirty(tileX, tileY);
+}
+
+void GameEngine::SendBlockBreakPacket(int playerId, int tileX, int tileY, float progress, unsigned char active, const sockaddr_in* targetAddress)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET)
+		return;
+
+	NetworkBlockBreakPacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::BlockBreak, sizeof(packet));
+	packet.playerId = playerId;
+	packet.tileX = tileX;
+	packet.tileY = tileY;
+	packet.progress = Clamp01(progress);
+	packet.active = active;
+
+	if (targetAddress != nullptr)
+	{
+		SendNetworkPacket(*targetAddress, &packet, sizeof(packet));
+		return;
+	}
+
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		BroadcastNetworkPacket(&packet, sizeof(packet));
+	else if (m_networkConnected)
+		SendNetworkPacket(m_networkServerAddress, &packet, sizeof(packet));
+}
+
+void GameEngine::PublishBlockBreakState(int tileX, int tileY, float progress, bool active)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return;
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		return;
+	if (!IsTileInBounds(tileX, tileY))
+		return;
+
+	SendBlockBreakPacket(m_localPlayerId, tileX, tileY, progress, active ? 1 : 0, nullptr);
+}
+
+void GameEngine::ApplyNetworkBlockBreakState(int playerId, int tileX, int tileY, float progress, bool active)
+{
+	if (playerId == m_localPlayerId || playerId <= 0 || !IsTileInBounds(tileX, tileY))
+		return;
+
+	RemoteBlockBreakState* state = nullptr;
+	for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	{
+		if (remoteBreak.playerId == playerId)
+		{
+			state = &remoteBreak;
+			break;
+		}
+	}
+
+	if (!active)
+	{
+		if (state != nullptr && state->tileX == tileX && state->tileY == tileY)
+			state->active = false;
+		return;
+	}
+
+	if (m_blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
+		return;
+
+	const int blockIndex = tileY * m_blockWidth + tileX;
+	if (m_blocks[blockIndex].visible == 0)
+		return;
+
+	if (state == nullptr)
+	{
+		for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+		{
+			if (!remoteBreak.active)
+			{
+				state = &remoteBreak;
+				break;
+			}
+		}
+	}
+
+	if (state == nullptr)
+	{
+		if (static_cast<int>(m_remoteBlockBreaks.size()) >= NetworkMaxPeers)
+			return;
+
+		m_remoteBlockBreaks.push_back(RemoteBlockBreakState());
+		state = &m_remoteBlockBreaks.back();
+	}
+
+	state->playerId = playerId;
+	state->tileX = tileX;
+	state->tileY = tileY;
+	state->progress = Clamp01(progress);
+	state->lastHeardTime = m_networkTime;
+	state->active = true;
+}
+
+void GameEngine::SendLeafEffectPacket(int playerId, int tileX, int tileY, unsigned int seed, const sockaddr_in* targetAddress)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET)
+		return;
+
+	NetworkLeafEffectPacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::LeafEffect, sizeof(packet));
+	packet.playerId = playerId;
+	packet.tileX = tileX;
+	packet.tileY = tileY;
+	packet.seed = seed;
+
+	if (targetAddress != nullptr)
+	{
+		SendNetworkPacket(*targetAddress, &packet, sizeof(packet));
+		return;
+	}
+
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		BroadcastNetworkPacket(&packet, sizeof(packet));
+	else if (m_networkConnected)
+		SendNetworkPacket(m_networkServerAddress, &packet, sizeof(packet));
+}
+
+void GameEngine::PublishLeafBreakEffect(int tileX, int tileY, unsigned int seed)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return;
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		return;
+	if (!IsTileInBounds(tileX, tileY))
+		return;
+
+	SendLeafEffectPacket(m_localPlayerId, tileX, tileY, seed, nullptr);
+}
+
+void GameEngine::ApplyNetworkLeafBreakEffect(int tileX, int tileY, unsigned int seed)
+{
+	SpawnLeafBreakEffectWithSeed(tileX, tileY, seed);
+}
+
+void GameEngine::SendDroppedItemPacket(const DroppedItemState& item, int playerId, const sockaddr_in* targetAddress)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET || item.networkId == 0)
+		return;
+
+	NetworkDroppedItemPacket packet;
+	packet.header = MakeNetworkHeader(NetworkPacketType::DroppedItem, sizeof(packet));
+	packet.playerId = playerId;
+	packet.networkId = item.networkId;
+	packet.x = item.x;
+	packet.y = item.y;
+	packet.velocityX = item.velocityX;
+	packet.velocityY = item.velocityY;
+	packet.pickupDelay = item.pickupDelay;
+	packet.tileIndex = item.tileIndex;
+	packet.amount = item.amount;
+	packet.pickupPlayerId = item.pickupPlayerId != 0 ? item.pickupPlayerId : m_localPlayerId;
+	packet.alive = item.alive ? 1 : 0;
+
+	if (targetAddress != nullptr)
+	{
+		SendNetworkPacket(*targetAddress, &packet, sizeof(packet));
+		return;
+	}
+
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		BroadcastNetworkPacket(&packet, sizeof(packet));
+	else if (m_networkConnected)
+		SendNetworkPacket(m_networkServerAddress, &packet, sizeof(packet));
+}
+
+void GameEngine::PublishDroppedItemState(const DroppedItemState& item)
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return;
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		return;
+
+	SendDroppedItemPacket(item, m_localPlayerId, nullptr);
+}
+
+void GameEngine::ApplyNetworkDroppedItemState(unsigned int networkId, int playerId, int pickupPlayerId, float x, float y, float velocityX, float velocityY, float pickupDelay, unsigned short tileIndex, int amount, unsigned char alive)
+{
+	if (networkId == 0 || amount <= 0)
+		return;
+
+	const int resolvedPickupPlayerId = pickupPlayerId > 0 ? pickupPlayerId : playerId;
+	if (m_blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
+	{
+		DroppedItemState pendingItem;
+		pendingItem.x = x;
+		pendingItem.y = y;
+		pendingItem.velocityX = velocityX;
+		pendingItem.velocityY = velocityY;
+		pendingItem.pickupDelay = (std::max)(0.0f, pickupDelay);
+		pendingItem.tileIndex = tileIndex;
+		pendingItem.networkId = networkId;
+		pendingItem.amount = amount;
+		pendingItem.pickupPlayerId = resolvedPickupPlayerId;
+		pendingItem.alive = alive != 0;
+		m_pendingNetworkDroppedItems.push_back(pendingItem);
+		return;
+	}
+
+	DroppedItemState* item = FindDroppedItemByNetworkId(networkId);
+	if (alive == 0)
+	{
+		if (item != nullptr)
+			item->alive = false;
+		return;
+	}
+
+	if (item != nullptr && !item->alive)
+		return;
+
+	DroppedItemState state;
+	state.x = x;
+	state.y = y;
+	state.velocityX = velocityX;
+	state.velocityY = velocityY;
+	state.pickupDelay = (std::max)(0.0f, pickupDelay);
+	state.tileIndex = tileIndex;
+	state.networkId = networkId;
+	state.amount = amount;
+	state.pickupPlayerId = resolvedPickupPlayerId;
+	state.alive = true;
+
+	if (item != nullptr)
+	{
+		*item = state;
+		return;
+	}
+
+	for (DroppedItemState& existing : m_droppedItems)
+	{
+		if (existing.alive)
+			continue;
+
+		existing = state;
+		return;
+	}
+
+	m_droppedItems.push_back(state);
+}
+
+void GameEngine::SendOwnedDroppedItemStates()
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || m_networkSocket == INVALID_SOCKET)
+		return;
+	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		return;
+
+	for (DroppedItemState& item : m_droppedItems)
+	{
+		if (!item.alive)
+			continue;
+
+		EnsureDroppedItemNetworkId(item);
+		if (IsNetworkItemOwnedByLocal(item))
+			SendDroppedItemPacket(item, m_localPlayerId, nullptr);
+	}
+}
+
+unsigned int GameEngine::GenerateNetworkItemId()
+{
+	const int safePlayerId = std::clamp(m_localPlayerId <= 0 ? 1 : m_localPlayerId, 1, 255);
+	const unsigned int playerBits = static_cast<unsigned int>(safePlayerId) << 24;
+	for (int attempt = 0; attempt < 0x00FFFFFF; ++attempt)
+	{
+		m_networkItemSequence = (m_networkItemSequence + 1u) & 0x00FFFFFFu;
+		if (m_networkItemSequence == 0)
+			m_networkItemSequence = 1;
+
+		const unsigned int networkId = playerBits | m_networkItemSequence;
+		if (FindDroppedItemByNetworkId(networkId) == nullptr)
+			return networkId;
+	}
+
+	return playerBits | (HashUInt(GetTickCount()) & 0x00FFFFFFu);
+}
+
+void GameEngine::EnsureDroppedItemNetworkId(DroppedItemState& item)
+{
+	if (item.networkId == 0 && m_networkMode != NetworkConfig::Mode::SinglePlayer)
+		item.networkId = GenerateNetworkItemId();
+}
+
+GameEngine::DroppedItemState* GameEngine::FindDroppedItemByNetworkId(unsigned int networkId)
+{
+	if (networkId == 0)
+		return nullptr;
+
+	for (DroppedItemState& item : m_droppedItems)
+	{
+		if (item.networkId == networkId)
+			return &item;
+	}
+
+	return nullptr;
+}
+
+bool GameEngine::IsNetworkItemOwnedByLocal(const DroppedItemState& item) const
+{
+	if (item.networkId == 0)
+		return true;
+
+	const int itemOwnerId = static_cast<int>((item.networkId >> 24) & 0xFFu);
+	return itemOwnerId == m_localPlayerId;
+}
+
+int GameEngine::ChooseDroppedItemPickupPlayer(float worldX, float worldY) const
+{
+	const int localPlayerId = m_localPlayerId > 0 ? m_localPlayerId : 1;
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return localPlayerId;
+
+	int bestPlayerId = localPlayerId;
+	const float localDeltaX = m_player.x - worldX;
+	const float localDeltaY = m_player.y - worldY;
+	float bestDistanceSq = localDeltaX * localDeltaX + localDeltaY * localDeltaY;
+	const float claimRadius = m_tileSize * 7.5f;
+	const float claimRadiusSq = claimRadius * claimRadius;
+
+	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	{
+		if (!remotePlayer.active || remotePlayer.id <= 0)
+			continue;
+
+		const float deltaX = remotePlayer.player.x - worldX;
+		const float deltaY = remotePlayer.player.y - worldY;
+		const float distanceSq = deltaX * deltaX + deltaY * deltaY;
+		if (distanceSq <= claimRadiusSq && distanceSq < bestDistanceSq)
+		{
+			bestDistanceSq = distanceSq;
+			bestPlayerId = remotePlayer.id;
+		}
+	}
+
+	return bestPlayerId;
+}
+
+bool GameEngine::CanLocalPlayerPickupItem(const DroppedItemState& item) const
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
+		return true;
+
+	return item.pickupPlayerId == 0 || item.pickupPlayerId == m_localPlayerId;
+}
+
+bool GameEngine::TryGetDroppedItemPickupPosition(const DroppedItemState& item, float& targetX, float& targetY) const
+{
+	if (m_networkMode == NetworkConfig::Mode::SinglePlayer || item.pickupPlayerId == 0 || item.pickupPlayerId == m_localPlayerId)
+	{
+		targetX = m_player.x;
+		targetY = m_player.y;
+		return true;
+	}
+
+	const int remotePlayerIndex = FindRemotePlayer(item.pickupPlayerId);
+	if (remotePlayerIndex < 0)
+		return false;
+
+	const RemotePlayerState& remotePlayer = m_remotePlayers[remotePlayerIndex];
+	if (!remotePlayer.active)
+		return false;
+
+	targetX = remotePlayer.player.x;
+	targetY = remotePlayer.player.y;
+	return true;
+}
+
+bool GameEngine::SendNetworkPacket(const sockaddr_in& address, const void* packet, int packetSize)
+{
+	if (m_networkSocket == INVALID_SOCKET || packet == nullptr || packetSize <= 0)
+		return false;
+
+	const int sent = sendto(
+		m_networkSocket,
+		static_cast<const char*>(packet),
+		packetSize,
+		0,
+		reinterpret_cast<const sockaddr*>(&address),
+		sizeof(address));
+	return sent == packetSize;
+}
+
+void GameEngine::BroadcastNetworkPacket(const void* packet, int packetSize, const sockaddr_in* exceptAddress)
+{
+	if (m_networkMode != NetworkConfig::Mode::Host)
+		return;
+
+	for (const NetworkPeerState& peer : m_networkPeers)
+	{
+		if (!peer.active)
+			continue;
+		if (exceptAddress != nullptr &&
+			peer.address.sin_addr.s_addr == exceptAddress->sin_addr.s_addr &&
+			peer.address.sin_port == exceptAddress->sin_port)
+		{
+			continue;
+		}
+
+		SendNetworkPacket(peer.address, packet, packetSize);
+	}
+}
+
+void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const sockaddr_in& from)
+{
+	if (data == nullptr || dataSize < static_cast<int>(sizeof(NetworkPacketHeader)))
+		return;
+
+	const NetworkPacketHeader* header = reinterpret_cast<const NetworkPacketHeader*>(data);
+	if (header->magic != NetworkMagic || header->version != NetworkVersion || header->size != dataSize)
+		return;
+
+	const NetworkPacketType packetType = static_cast<NetworkPacketType>(header->type);
+	switch (packetType)
+	{
+	case NetworkPacketType::Hello:
+	{
+		if (m_networkMode != NetworkConfig::Mode::Host || dataSize != static_cast<int>(sizeof(NetworkHelloPacket)))
+			return;
+
+		const NetworkHelloPacket* packet = reinterpret_cast<const NetworkHelloPacket*>(data);
+		int peerIndex = FindNetworkPeer(from);
+		if (peerIndex < 0)
+		{
+			if (static_cast<int>(m_networkPeers.size()) >= NetworkMaxPeers)
+				return;
+
+			NetworkPeerState peer;
+			peer.address = from;
+			peer.lastHeardTime = m_networkTime;
+			peer.token = packet->token;
+			peer.playerId = m_nextNetworkPlayerId++;
+			peer.active = true;
+			m_networkPeers.push_back(peer);
+			peerIndex = static_cast<int>(m_networkPeers.size()) - 1;
+		}
+
+		NetworkPeerState& peer = m_networkPeers[peerIndex];
+		peer.lastHeardTime = m_networkTime;
+		peer.token = packet->token;
+		peer.active = true;
+		SendWelcomePacket(from, peer.playerId, peer.token);
+		break;
+	}
+	case NetworkPacketType::Welcome:
+	{
+		if (m_networkMode != NetworkConfig::Mode::Client || dataSize != static_cast<int>(sizeof(NetworkWelcomePacket)))
+			return;
+
+		const NetworkWelcomePacket* packet = reinterpret_cast<const NetworkWelcomePacket*>(data);
+		if (packet->token != m_networkClientToken)
+			return;
+		if (packet->blockWidth != m_blockWidth || packet->blockHeight != m_blockHeight)
+			return;
+
+		const bool shouldRebuildWorld = !m_gameStarted || m_blocks.empty() || m_worldSeed != packet->worldSeed;
+		m_localPlayerId = packet->playerId;
+		m_worldSeed = packet->worldSeed;
+		m_networkSeedReady = true;
+		m_networkConnected = true;
+		if (shouldRebuildWorld)
+			InitializeWorld();
+		m_gameStarted = true;
+		m_multiplayerMenuOpen = false;
+		m_startJoinHostEditing = false;
+		m_multiplayerJoinHostEditing = false;
+		SetMultiplayerMenuStatus("호스트 참가 완료");
+		SetStatusText("호스트 참가 완료", 2.0f);
+		break;
+	}
+	case NetworkPacketType::PlayerState:
+	{
+		if (dataSize != static_cast<int>(sizeof(NetworkPlayerStatePacket)))
+			return;
+
+		const NetworkPlayerStatePacket* packet = reinterpret_cast<const NetworkPlayerStatePacket*>(data);
+		if (packet->playerId == m_localPlayerId || packet->playerId <= 0)
+			return;
+
+		if (m_networkMode == NetworkConfig::Mode::Host)
+		{
+			const int peerIndex = FindNetworkPeer(from);
+			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+				return;
+
+			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
+		}
+
+		RemotePlayerState* remotePlayer = GetOrCreateRemotePlayer(packet->playerId);
+		if (remotePlayer == nullptr)
+			return;
+
+		remotePlayer->id = packet->playerId;
+		remotePlayer->player.x = packet->x;
+		remotePlayer->player.y = packet->y;
+		remotePlayer->player.velocityX = packet->velocityX;
+		remotePlayer->player.velocityY = packet->velocityY;
+		remotePlayer->player.animationTime = packet->animationTime;
+		remotePlayer->player.facing = packet->facing == 0 ? 1 : packet->facing;
+		remotePlayer->player.onGround = packet->onGround != 0;
+		remotePlayer->attackTimer = packet->attackTimer;
+		remotePlayer->health = packet->health;
+		remotePlayer->selectedInventorySlot = packet->selectedInventorySlot;
+		remotePlayer->lastHeardTime = m_networkTime;
+		remotePlayer->active = true;
+		break;
+	}
+	case NetworkPacketType::TileEdit:
+	{
+		if (dataSize != static_cast<int>(sizeof(NetworkTileEditPacket)))
+			return;
+
+		const NetworkTileEditPacket* packet = reinterpret_cast<const NetworkTileEditPacket*>(data);
+		if (m_networkMode == NetworkConfig::Mode::Host)
+		{
+			const int peerIndex = FindNetworkPeer(from);
+			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+				return;
+
+			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			ApplyNetworkTileEdit(packet->tileX, packet->tileY, packet->tileIndex, packet->visible);
+			BroadcastTileEdit(packet->tileX, packet->tileY, packet->tileIndex, packet->visible);
+			return;
+		}
+
+		if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+		{
+			NetworkTileEditState edit;
+			edit.tileX = packet->tileX;
+			edit.tileY = packet->tileY;
+			edit.tileIndex = packet->tileIndex;
+			edit.visible = packet->visible;
+			edit.sequence = packet->sequence;
+			m_pendingNetworkTileEdits.push_back(edit);
+			return;
+		}
+
+		ApplyNetworkTileEdit(packet->tileX, packet->tileY, packet->tileIndex, packet->visible);
+		break;
+	}
+	case NetworkPacketType::BlockBreak:
+	{
+		if (dataSize != static_cast<int>(sizeof(NetworkBlockBreakPacket)))
+			return;
+
+		const NetworkBlockBreakPacket* packet = reinterpret_cast<const NetworkBlockBreakPacket*>(data);
+		if (packet->playerId == m_localPlayerId || packet->playerId <= 0)
+			return;
+
+		if (m_networkMode == NetworkConfig::Mode::Host)
+		{
+			const int peerIndex = FindNetworkPeer(from);
+			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+				return;
+
+			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			ApplyNetworkBlockBreakState(packet->playerId, packet->tileX, packet->tileY, packet->progress, packet->active != 0);
+			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
+			return;
+		}
+
+		if (m_networkMode == NetworkConfig::Mode::Client && m_networkConnected)
+			ApplyNetworkBlockBreakState(packet->playerId, packet->tileX, packet->tileY, packet->progress, packet->active != 0);
+		break;
+	}
+	case NetworkPacketType::LeafEffect:
+	{
+		if (dataSize != static_cast<int>(sizeof(NetworkLeafEffectPacket)))
+			return;
+
+		const NetworkLeafEffectPacket* packet = reinterpret_cast<const NetworkLeafEffectPacket*>(data);
+		if (packet->playerId == m_localPlayerId || packet->playerId <= 0)
+			return;
+
+		if (m_networkMode == NetworkConfig::Mode::Host)
+		{
+			const int peerIndex = FindNetworkPeer(from);
+			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+				return;
+
+			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			ApplyNetworkLeafBreakEffect(packet->tileX, packet->tileY, packet->seed);
+			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
+			return;
+		}
+
+		if (m_networkMode == NetworkConfig::Mode::Client && m_networkConnected)
+			ApplyNetworkLeafBreakEffect(packet->tileX, packet->tileY, packet->seed);
+		break;
+	}
+	case NetworkPacketType::DroppedItem:
+	{
+		if (dataSize != static_cast<int>(sizeof(NetworkDroppedItemPacket)))
+			return;
+
+		const NetworkDroppedItemPacket* packet = reinterpret_cast<const NetworkDroppedItemPacket*>(data);
+		if (packet->playerId <= 0 || packet->networkId == 0)
+			return;
+
+		const int itemOwnerId = static_cast<int>((packet->networkId >> 24) & 0xFFu);
+		if (packet->alive != 0 && itemOwnerId != packet->playerId)
+			return;
+
+		if (m_networkMode == NetworkConfig::Mode::Host)
+		{
+			const int peerIndex = FindNetworkPeer(from);
+			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+				return;
+
+			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			ApplyNetworkDroppedItemState(packet->networkId, packet->playerId, packet->pickupPlayerId, packet->x, packet->y, packet->velocityX, packet->velocityY, packet->pickupDelay, packet->tileIndex, packet->amount, packet->alive);
+			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
+			return;
+		}
+
+		if (m_networkMode == NetworkConfig::Mode::Client && m_networkConnected)
+			ApplyNetworkDroppedItemState(packet->networkId, packet->playerId, packet->pickupPlayerId, packet->x, packet->y, packet->velocityX, packet->velocityY, packet->pickupDelay, packet->tileIndex, packet->amount, packet->alive);
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+int GameEngine::FindNetworkPeer(const sockaddr_in& address) const
+{
+	for (size_t i = 0; i < m_networkPeers.size(); ++i)
+	{
+		const NetworkPeerState& peer = m_networkPeers[i];
+		if (peer.address.sin_addr.s_addr == address.sin_addr.s_addr && peer.address.sin_port == address.sin_port)
+			return static_cast<int>(i);
+	}
+
+	return -1;
+}
+
+int GameEngine::FindRemotePlayer(int playerId) const
+{
+	for (size_t i = 0; i < m_remotePlayers.size(); ++i)
+	{
+		if (m_remotePlayers[i].id == playerId)
+			return static_cast<int>(i);
+	}
+
+	return -1;
+}
+
+GameEngine::RemotePlayerState* GameEngine::GetOrCreateRemotePlayer(int playerId)
+{
+	if (playerId == m_localPlayerId || playerId <= 0)
+		return nullptr;
+
+	const int existingIndex = FindRemotePlayer(playerId);
+	if (existingIndex >= 0)
+		return &m_remotePlayers[existingIndex];
+
+	if (static_cast<int>(m_remotePlayers.size()) >= NetworkMaxPeers)
+		return nullptr;
+
+	RemotePlayerState remotePlayer;
+	remotePlayer.id = playerId;
+	remotePlayer.health = GetPlayerMaxHealth();
+	remotePlayer.active = true;
+	m_remotePlayers.push_back(remotePlayer);
+	return &m_remotePlayers.back();
+}
+
+const char* GameEngine::GetNetworkModeText() const
+{
+	if (m_networkMode == NetworkConfig::Mode::Host)
+		return "호스트";
+	if (m_networkMode == NetworkConfig::Mode::Client)
+		return "참가";
+	return "혼자";
 }
 
 void GameEngine::QueryMonstersInAABB(const collib::AABB& area, std::vector<int>& results) const
@@ -5498,6 +8285,7 @@ float GameEngine::TileBottom(int tileY) const
 
 void GameEngine::Release()
 {
+	ShutdownNetwork();
 	DeleteInput(m_input);
 	DeleteRenderer(m_renderer);
 	DeleteTimer(m_timer);

@@ -1,9 +1,14 @@
 ﻿#include "pch.h"
 #include "Renderer.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 using namespace DirectX;
+
+#pragma comment(lib, "gdi32.lib")
 
 struct SpriteTransformData
 {
@@ -15,6 +20,11 @@ struct SpriteTransformData
 namespace
 {
 	constexpr size_t VerticesPerQuad = 4;
+	constexpr int FontAtlasTextureSize = 2048;
+	constexpr int FontAtlasCellSize = 64;
+	constexpr int FontAtlasPixelHeight = 32;
+	constexpr const WCHAR* FontFileName = L"GalmuriMono9.ttf";
+	constexpr const WCHAR* FontFamilyName = L"GalmuriMono9 Regular";
 
 	ID3D11Buffer* CreateDynamicBuffer(ID3D11Device* pDevice, UINT byteWidth, UINT bindFlags)
 	{
@@ -30,6 +40,25 @@ namespace
 			__debugbreak();
 
 		return pBuffer;
+	}
+
+	bool ResolveWorkspaceFile(const WCHAR* fileName, WCHAR* resolvedPath, DWORD resolvedPathCount)
+	{
+		if (fileName == nullptr || resolvedPath == nullptr || resolvedPathCount == 0)
+			return false;
+
+		GetCurrentDirectoryW(resolvedPathCount, resolvedPath);
+		PathAppendW(resolvedPath, fileName);
+		if (PathFileExistsW(resolvedPath))
+			return true;
+
+		WCHAR moduleDir[MAX_PATH] = {};
+		GetModuleFileNameW(nullptr, moduleDir, MAX_PATH);
+		PathRemoveFileSpecW(moduleDir);
+		PathAppendW(moduleDir, L"..\\..\\..");
+		PathCanonicalizeW(resolvedPath, moduleDir);
+		PathAppendW(resolvedPath, fileName);
+		return PathFileExistsW(resolvedPath) != FALSE;
 	}
 }
 
@@ -69,6 +98,9 @@ Renderer::~Renderer()
 
 void Renderer::Initialize(UINT winWidth, UINT winHeight, HWND& hwnd)
 {
+	m_windowWidth = winWidth > 0 ? winWidth : 1;
+	m_windowHeight = winHeight > 0 ? winHeight : 1;
+
 	IDXGIFactory* pFact = nullptr;
 	IDXGIAdapter* pAdap = nullptr;
 
@@ -165,12 +197,103 @@ void Renderer::Initialize(UINT winWidth, UINT winHeight, HWND& hwnd)
 
 }
 
+void Renderer::Resize(UINT winWidth, UINT winHeight)
+{
+	winWidth = winWidth > 0 ? winWidth : 1;
+	winHeight = winHeight > 0 ? winHeight : 1;
+	if (m_windowWidth == winWidth && m_windowHeight == winHeight &&
+		m_pRenderTargetView != nullptr && m_pDepthStencilView != nullptr)
+	{
+		return;
+	}
+
+	if (m_pSwapChain == nullptr || m_pDevice == nullptr || m_pDeviceContext == nullptr)
+		return;
+
+	FlushSpriteBatch();
+	FlushGlyphBatch();
+
+	ID3D11RenderTargetView* nullRenderTargets[] = { nullptr };
+	m_pDeviceContext->OMSetRenderTargets(1, nullRenderTargets, nullptr);
+
+	if (m_pRenderTargetView)
+	{
+		m_pRenderTargetView->Release();
+		m_pRenderTargetView = nullptr;
+	}
+	if (m_pRenderTargetBuffer)
+	{
+		m_pRenderTargetBuffer->Release();
+		m_pRenderTargetBuffer = nullptr;
+	}
+	if (m_pDepthStencilView)
+	{
+		m_pDepthStencilView->Release();
+		m_pDepthStencilView = nullptr;
+	}
+	if (m_pDepthStencilBuffer)
+	{
+		m_pDepthStencilBuffer->Release();
+		m_pDepthStencilBuffer = nullptr;
+	}
+
+	const HRESULT resizeResult = m_pSwapChain->ResizeBuffers(
+		0,
+		winWidth,
+		winHeight,
+		DXGI_FORMAT_UNKNOWN,
+		DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
+	if (FAILED(resizeResult))
+		__debugbreak();
+
+	m_windowWidth = winWidth;
+	m_windowHeight = winHeight;
+
+	if (S_OK != m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&m_pRenderTargetBuffer)))
+		__debugbreak();
+	if (S_OK != m_pDevice->CreateRenderTargetView(m_pRenderTargetBuffer, nullptr, &m_pRenderTargetView))
+		__debugbreak();
+
+	D3D11_TEXTURE2D_DESC dsbDesc = {};
+	dsbDesc.Width = winWidth;
+	dsbDesc.Height = winHeight;
+	dsbDesc.MipLevels = 1;
+	dsbDesc.ArraySize = 1;
+	dsbDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	dsbDesc.SampleDesc.Count = 1;
+	dsbDesc.SampleDesc.Quality = 0;
+	dsbDesc.Usage = D3D11_USAGE_DEFAULT;
+	dsbDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+	if (S_OK != m_pDevice->CreateTexture2D(&dsbDesc, nullptr, &m_pDepthStencilBuffer))
+		__debugbreak();
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = dsbDesc.Format;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Texture2D.MipSlice = 0;
+	if (S_OK != m_pDevice->CreateDepthStencilView(m_pDepthStencilBuffer, &dsvDesc, &m_pDepthStencilView))
+		__debugbreak();
+
+	m_matView = XMMatrixLookToLH(m_CameraPosition, m_CameraEyeDirection, m_CameraUpDirection);
+	m_matProjection = XMMatrixPerspectiveFovLH(m_degFovY * Deg2Rad, static_cast<float>(winWidth) / static_cast<float>(winHeight), m_near, m_far);
+	const float cameraDistance = std::fabs(XMVectorGetZ(m_CameraPosition));
+	m_viewHalfHeight = std::tan((m_degFovY * Deg2Rad) * 0.5f) * cameraDistance;
+	m_viewHalfWidth = m_viewHalfHeight * (static_cast<float>(winWidth) / static_cast<float>(winHeight));
+
+	ResetViewportRect();
+	m_boundTexture = nullptr;
+	m_spriteBatchTexture = nullptr;
+	m_spritePipelineBound = false;
+}
+
 void Renderer::BeginFrame()
 {
 	m_currentFrameStats = RenderFrameStats();
 	m_pDeviceContext->ClearRenderTargetView(m_pRenderTargetView, m_clearColor);
 	m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 	m_pDeviceContext->OMSetRenderTargets(1, &m_pRenderTargetView, m_pDepthStencilView);
+	ResetViewportRect();
 	m_spritePipelineBound = false;
 	m_boundTexture = nullptr;
 	m_spriteBatchTexture = nullptr;
@@ -182,6 +305,74 @@ void Renderer::EndFrame()
 	FlushGlyphBatch();
 	m_lastFrameStats = m_currentFrameStats;
 	m_pSwapChain->Present(0, 0);
+}
+
+void Renderer::SetViewportRect(float left, float top, float width, float height)
+{
+	FlushSpriteBatch();
+	FlushGlyphBatch();
+
+	const float viewWidth = m_viewHalfWidth * 2.0f;
+	const float viewHeight = m_viewHalfHeight * 2.0f;
+	if (viewWidth <= 0.0f || viewHeight <= 0.0f || width <= 0.0f || height <= 0.0f)
+		return;
+
+	const float right = left + width;
+	const float bottom = top - height;
+	const float normalizedLeft = (left + m_viewHalfWidth) / viewWidth;
+	const float normalizedRight = (right + m_viewHalfWidth) / viewWidth;
+	const float normalizedTop = (m_viewHalfHeight - top) / viewHeight;
+	const float normalizedBottom = (m_viewHalfHeight - bottom) / viewHeight;
+
+	LONG pixelLeft = static_cast<LONG>(std::floor(normalizedLeft * static_cast<float>(m_windowWidth)));
+	LONG pixelRight = static_cast<LONG>(std::ceil(normalizedRight * static_cast<float>(m_windowWidth)));
+	LONG pixelTop = static_cast<LONG>(std::floor(normalizedTop * static_cast<float>(m_windowHeight)));
+	LONG pixelBottom = static_cast<LONG>(std::ceil(normalizedBottom * static_cast<float>(m_windowHeight)));
+
+	pixelLeft = std::clamp<LONG>(pixelLeft, 0, static_cast<LONG>(m_windowWidth));
+	pixelRight = std::clamp<LONG>(pixelRight, 0, static_cast<LONG>(m_windowWidth));
+	pixelTop = std::clamp<LONG>(pixelTop, 0, static_cast<LONG>(m_windowHeight));
+	pixelBottom = std::clamp<LONG>(pixelBottom, 0, static_cast<LONG>(m_windowHeight));
+	if (pixelRight <= pixelLeft || pixelBottom <= pixelTop)
+		return;
+
+	D3D11_VIEWPORT viewportDesc = {};
+	viewportDesc.Width = static_cast<FLOAT>(pixelRight - pixelLeft);
+	viewportDesc.Height = static_cast<FLOAT>(pixelBottom - pixelTop);
+	viewportDesc.MinDepth = 0.0f;
+	viewportDesc.MaxDepth = 1.0f;
+	viewportDesc.TopLeftX = static_cast<FLOAT>(pixelLeft);
+	viewportDesc.TopLeftY = static_cast<FLOAT>(pixelTop);
+	m_pDeviceContext->RSSetViewports(1, &viewportDesc);
+
+	D3D11_RECT scissorRect = {};
+	scissorRect.left = pixelLeft;
+	scissorRect.top = pixelTop;
+	scissorRect.right = pixelRight;
+	scissorRect.bottom = pixelBottom;
+	m_pDeviceContext->RSSetScissorRects(1, &scissorRect);
+}
+
+void Renderer::ResetViewportRect()
+{
+	FlushSpriteBatch();
+	FlushGlyphBatch();
+
+	D3D11_VIEWPORT viewportDesc = {};
+	viewportDesc.Width = static_cast<FLOAT>(m_windowWidth);
+	viewportDesc.Height = static_cast<FLOAT>(m_windowHeight);
+	viewportDesc.MinDepth = 0.0f;
+	viewportDesc.MaxDepth = 1.0f;
+	viewportDesc.TopLeftX = 0.0f;
+	viewportDesc.TopLeftY = 0.0f;
+	m_pDeviceContext->RSSetViewports(1, &viewportDesc);
+
+	D3D11_RECT scissorRect = {};
+	scissorRect.left = 0;
+	scissorRect.top = 0;
+	scissorRect.right = static_cast<LONG>(m_windowWidth);
+	scissorRect.bottom = static_cast<LONG>(m_windowHeight);
+	m_pDeviceContext->RSSetScissorRects(1, &scissorRect);
 }
 
 void Renderer::InitializePipeline()
@@ -280,6 +471,7 @@ void Renderer::InitializePipeline()
 
 void Renderer::ReleasePipeline()
 {
+	ReleaseFontAtlas();
 	ReleaseTextures();
 	if (m_pipeline.pPixelShader)
 		m_pipeline.pPixelShader->Release();
@@ -349,6 +541,43 @@ void Renderer::ReleaseTextures()
 	m_pipeline.pTexture = nullptr;
 }
 
+void Renderer::ReleaseFontAtlas()
+{
+	if (m_fontAtlasView)
+	{
+		m_fontAtlasView->Release();
+		m_fontAtlasView = nullptr;
+	}
+	if (m_fontAtlasTexture)
+	{
+		m_fontAtlasTexture->Release();
+		m_fontAtlasTexture = nullptr;
+	}
+	if (m_fontDc != nullptr)
+	{
+		SelectObject(m_fontDc, GetStockObject(SYSTEM_FONT));
+		DeleteDC(m_fontDc);
+		m_fontDc = nullptr;
+	}
+	if (m_fontBitmap != nullptr)
+	{
+		DeleteObject(m_fontBitmap);
+		m_fontBitmap = nullptr;
+		m_fontBitmapPixels = nullptr;
+	}
+	if (m_fontHandle != nullptr)
+	{
+		DeleteObject(m_fontHandle);
+		m_fontHandle = nullptr;
+	}
+
+	m_fontGlyphs.clear();
+	m_fontAtlasPixels.clear();
+	m_fontAtlasReady = false;
+	m_fontAtlasDirty = false;
+	m_fontGlyphCount = 0;
+}
+
 void Renderer::CreateWhiteTexture()
 {
 	const UINT whitePixel = 0xFFFFFFFF;
@@ -375,6 +604,221 @@ void Renderer::CreateWhiteTexture()
 		__debugbreak();
 
 	texture->Release();
+}
+
+bool Renderer::EnsureFontAtlas()
+{
+	if (m_fontAtlasReady)
+		return true;
+
+	WCHAR fontPath[MAX_PATH] = {};
+	if (!ResolveWorkspaceFile(FontFileName, fontPath, MAX_PATH))
+	{
+		OutputDebugStringW(L"Font file was not found: ");
+		OutputDebugStringW(FontFileName);
+		OutputDebugStringW(L"\n");
+		return false;
+	}
+
+	AddFontResourceExW(fontPath, FR_PRIVATE, nullptr);
+
+	m_fontAtlasWidth = FontAtlasTextureSize;
+	m_fontAtlasHeight = FontAtlasTextureSize;
+	m_fontAtlasCellWidth = FontAtlasCellSize;
+	m_fontAtlasCellHeight = FontAtlasCellSize;
+	m_fontAtlasColumns = m_fontAtlasWidth / m_fontAtlasCellWidth;
+	m_fontAtlasRows = m_fontAtlasHeight / m_fontAtlasCellHeight;
+	m_fontGlyphCount = 0;
+	m_fontPadding = 4;
+	m_fontAtlasPixels.assign(static_cast<size_t>(m_fontAtlasWidth * m_fontAtlasHeight), 0);
+
+	m_fontHandle = CreateFontW(
+		-FontAtlasPixelHeight,
+		0,
+		0,
+		0,
+		FW_NORMAL,
+		FALSE,
+		FALSE,
+		FALSE,
+		DEFAULT_CHARSET,
+		OUT_TT_PRECIS,
+		CLIP_DEFAULT_PRECIS,
+		NONANTIALIASED_QUALITY,
+		DEFAULT_PITCH | FF_DONTCARE,
+		FontFamilyName);
+	if (m_fontHandle == nullptr)
+		return false;
+
+	m_fontDc = CreateCompatibleDC(nullptr);
+	if (m_fontDc == nullptr)
+		return false;
+
+	BITMAPINFO bitmapInfo = {};
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = m_fontAtlasCellWidth;
+	bitmapInfo.bmiHeader.biHeight = -m_fontAtlasCellHeight;
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	m_fontBitmap = CreateDIBSection(m_fontDc, &bitmapInfo, DIB_RGB_COLORS, &m_fontBitmapPixels, nullptr, 0);
+	if (m_fontBitmap == nullptr || m_fontBitmapPixels == nullptr)
+		return false;
+
+	SelectObject(m_fontDc, m_fontBitmap);
+	SelectObject(m_fontDc, m_fontHandle);
+	SetBkMode(m_fontDc, TRANSPARENT);
+	SetTextColor(m_fontDc, RGB(255, 255, 255));
+
+	SIZE asciiSize = {};
+	GetTextExtentPoint32W(m_fontDc, L"A", 1, &asciiSize);
+	m_fontAsciiWidth = static_cast<float>((std::max)(1L, asciiSize.cx));
+
+	D3D11_TEXTURE2D_DESC textureDesc = {};
+	textureDesc.Width = static_cast<UINT>(m_fontAtlasWidth);
+	textureDesc.Height = static_cast<UINT>(m_fontAtlasHeight);
+	textureDesc.MipLevels = 1;
+	textureDesc.ArraySize = 1;
+	textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	textureDesc.SampleDesc.Count = 1;
+	textureDesc.Usage = D3D11_USAGE_DEFAULT;
+	textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+	D3D11_SUBRESOURCE_DATA textureData = {};
+	textureData.pSysMem = m_fontAtlasPixels.data();
+	textureData.SysMemPitch = static_cast<UINT>(m_fontAtlasWidth * sizeof(unsigned int));
+	if (S_OK != m_pDevice->CreateTexture2D(&textureDesc, &textureData, &m_fontAtlasTexture))
+		return false;
+	if (S_OK != m_pDevice->CreateShaderResourceView(m_fontAtlasTexture, nullptr, &m_fontAtlasView))
+		return false;
+
+	m_fontAtlasReady = true;
+	m_fontAtlasDirty = false;
+	return true;
+}
+
+bool Renderer::EnsureFontGlyph(unsigned int codepoint)
+{
+	if (!EnsureFontAtlas())
+		return false;
+
+	if (m_fontGlyphs.find(codepoint) != m_fontGlyphs.end())
+		return true;
+
+	const int maxGlyphCount = m_fontAtlasColumns * m_fontAtlasRows;
+	if (m_fontGlyphCount >= maxGlyphCount)
+		return false;
+
+	const int tileIndex = m_fontGlyphCount++;
+	const int cellX = (tileIndex % m_fontAtlasColumns) * m_fontAtlasCellWidth;
+	const int cellY = (tileIndex / m_fontAtlasColumns) * m_fontAtlasCellHeight;
+
+	unsigned int* dibPixels = static_cast<unsigned int*>(m_fontBitmapPixels);
+	std::fill(dibPixels, dibPixels + static_cast<size_t>(m_fontAtlasCellWidth * m_fontAtlasCellHeight), 0);
+
+	wchar_t text[3] = {};
+	int textLength = 1;
+	if (codepoint <= 0xFFFF)
+	{
+		text[0] = static_cast<wchar_t>(codepoint);
+	}
+	else
+	{
+		const unsigned int adjusted = codepoint - 0x10000;
+		text[0] = static_cast<wchar_t>(0xD800 + (adjusted >> 10));
+		text[1] = static_cast<wchar_t>(0xDC00 + (adjusted & 0x3FF));
+		textLength = 2;
+	}
+
+	SIZE glyphSize = {};
+	GetTextExtentPoint32W(m_fontDc, text, textLength, &glyphSize);
+	const int drawX = m_fontPadding;
+	const int drawY = m_fontPadding;
+	TextOutW(m_fontDc, drawX, drawY, text, textLength);
+
+	for (int y = 0; y < m_fontAtlasCellHeight; ++y)
+	{
+		for (int x = 0; x < m_fontAtlasCellWidth; ++x)
+		{
+			const unsigned int source = dibPixels[y * m_fontAtlasCellWidth + x];
+			const unsigned int red = source & 0x000000FFu;
+			const unsigned int green = (source >> 8) & 0x000000FFu;
+			const unsigned int blue = (source >> 16) & 0x000000FFu;
+			const unsigned int alpha = (std::max)(red, (std::max)(green, blue));
+			const unsigned int target = alpha == 0 ? 0 : ((alpha << 24) | 0x00FFFFFFu);
+			m_fontAtlasPixels[(cellY + y) * m_fontAtlasWidth + (cellX + x)] = target;
+		}
+	}
+
+	FontGlyph glyph;
+	glyph.tileIndex = tileIndex;
+	glyph.widthPixels = static_cast<float>((std::max)(1L, glyphSize.cx));
+	glyph.advancePixels = glyph.widthPixels;
+	m_fontGlyphs.insert({ codepoint, glyph });
+	m_fontAtlasDirty = true;
+	return true;
+}
+
+void Renderer::UploadFontAtlas()
+{
+	if (!m_fontAtlasReady || !m_fontAtlasDirty || m_fontAtlasTexture == nullptr || m_fontAtlasPixels.empty())
+		return;
+
+	ID3D11ShaderResourceView* nullView = nullptr;
+	m_pDeviceContext->PSSetShaderResources(0, 1, &nullView);
+	if (m_boundTexture == m_fontAtlasView)
+		m_boundTexture = nullptr;
+
+	m_pDeviceContext->UpdateSubresource(
+		m_fontAtlasTexture,
+		0,
+		nullptr,
+		m_fontAtlasPixels.data(),
+		static_cast<UINT>(m_fontAtlasWidth * sizeof(unsigned int)),
+		0);
+	m_fontAtlasDirty = false;
+}
+
+unsigned int Renderer::DecodeUtf8Codepoint(const char*& cursor) const
+{
+	if (cursor == nullptr || *cursor == '\0')
+		return 0;
+
+	const unsigned char first = static_cast<unsigned char>(*cursor++);
+	if (first < 0x80)
+		return first;
+
+	if ((first & 0xE0) == 0xC0)
+	{
+		const unsigned char second = static_cast<unsigned char>(*cursor);
+		if ((second & 0xC0) != 0x80)
+			return '?';
+		++cursor;
+		return ((first & 0x1Fu) << 6) | (second & 0x3Fu);
+	}
+
+	if ((first & 0xF0) == 0xE0)
+	{
+		const unsigned char second = static_cast<unsigned char>(*cursor);
+		const unsigned char third = static_cast<unsigned char>(*(cursor + 1));
+		if ((second & 0xC0) != 0x80 || (third & 0xC0) != 0x80)
+			return '?';
+		cursor += 2;
+		return ((first & 0x0Fu) << 12) | ((second & 0x3Fu) << 6) | (third & 0x3Fu);
+	}
+
+	if ((first & 0xF8) == 0xF0)
+	{
+		const unsigned char second = static_cast<unsigned char>(*cursor);
+		const unsigned char third = static_cast<unsigned char>(*(cursor + 1));
+		const unsigned char fourth = static_cast<unsigned char>(*(cursor + 2));
+		if ((second & 0xC0) != 0x80 || (third & 0xC0) != 0x80 || (fourth & 0xC0) != 0x80)
+			return '?';
+		cursor += 3;
+		return ((first & 0x07u) << 18) | ((second & 0x3Fu) << 12) | ((third & 0x3Fu) << 6) | (fourth & 0x3Fu);
+	}
+
+	return '?';
 }
 
 void Renderer::BindSpritePipeline()
@@ -1239,6 +1683,89 @@ void Renderer::DrawGlyphSprite(const GlyphSpriteDesc& desc)
 		desc.depth };
 	instance.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
 	m_glyphBatchInstances.push_back(instance);
+}
+
+void Renderer::DrawText(const TextDesc& desc)
+{
+	if (desc.text == nullptr || desc.text[0] == '\0' || desc.pixelSize <= 0.0f)
+		return;
+	if (!EnsureFontAtlas())
+		return;
+
+	const char* scan = desc.text;
+	while (*scan != '\0')
+	{
+		const unsigned int codepoint = DecodeUtf8Codepoint(scan);
+		if (codepoint == 0)
+			break;
+		if (codepoint == '\r' || codepoint == '\n' || codepoint == '\t' || codepoint == ' ')
+			continue;
+
+		if (!EnsureFontGlyph(codepoint))
+			EnsureFontGlyph('?');
+	}
+	UploadFontAtlas();
+
+	const float scale = desc.pixelSize * 5.0f / (std::max)(1.0f, m_fontAsciiWidth);
+	const float quadWidth = static_cast<float>(m_fontAtlasCellWidth) * scale;
+	const float quadHeight = static_cast<float>(m_fontAtlasCellHeight) * scale;
+	const float padding = static_cast<float>(m_fontPadding) * scale;
+	const float lineAdvance = desc.pixelSize * 9.0f;
+	float cursorX = desc.x;
+	float cursorY = desc.y;
+
+	scan = desc.text;
+	while (*scan != '\0')
+	{
+		const unsigned int codepoint = DecodeUtf8Codepoint(scan);
+		if (codepoint == 0)
+			break;
+
+		if (codepoint == '\r')
+			continue;
+		if (codepoint == '\n')
+		{
+			cursorX = desc.x;
+			cursorY -= lineAdvance;
+			continue;
+		}
+		if (codepoint == '\t')
+		{
+			cursorX += desc.pixelSize * 16.0f;
+			continue;
+		}
+		if (codepoint == ' ')
+		{
+			cursorX += desc.pixelSize * 4.0f;
+			continue;
+		}
+
+		auto glyphIter = m_fontGlyphs.find(codepoint);
+		if (glyphIter == m_fontGlyphs.end())
+			glyphIter = m_fontGlyphs.find('?');
+		if (glyphIter == m_fontGlyphs.end())
+			continue;
+
+		const FontGlyph& glyph = glyphIter->second;
+		SpriteDesc glyphDesc;
+		glyphDesc.textureFile = nullptr;
+		glyphDesc.positionX = cursorX - padding + quadWidth * 0.5f;
+		glyphDesc.positionY = cursorY + padding - quadHeight * 0.5f;
+		glyphDesc.width = quadWidth;
+		glyphDesc.height = quadHeight;
+		glyphDesc.atlasColumns = m_fontAtlasColumns;
+		glyphDesc.atlasRows = m_fontAtlasRows;
+		glyphDesc.tileIndex = glyph.tileIndex;
+		glyphDesc.colorR = desc.colorR;
+		glyphDesc.colorG = desc.colorG;
+		glyphDesc.colorB = desc.colorB;
+		glyphDesc.colorA = desc.colorA;
+		glyphDesc.depth = desc.depth;
+		DrawSpriteQuad(glyphDesc, m_fontAtlasView);
+
+		const float advanceRatio = glyph.advancePixels / (std::max)(1.0f, m_fontAsciiWidth);
+		cursorX += desc.pixelSize * 6.0f * advanceRatio;
+	}
 }
 
 void Renderer::DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* texture)
