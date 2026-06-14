@@ -1056,106 +1056,103 @@ void GameEngine::DrawInventory()
 	const UiRect panel = GetInventoryPanelRect();
 	DrawUiPanel(panel, "inventory");
 
-	const int columns = 10;
-	const int rows = (InventorySlotCount + columns - 1) / columns;
-	const float padding = 4.0f;
-	const float slotGap = 0.0f;
-	const float slotSize = std::clamp((std::min)(
-		(panel.width - padding * 2.0f - slotGap * static_cast<float>(columns - 1)) / static_cast<float>(columns),
-		(panel.height - padding * 2.0f - slotGap * static_cast<float>(rows - 1)) / static_cast<float>(rows)),
-		18.0f, 40.0f);
-	const float startX = panel.left + padding + slotSize * 0.5f;
-	const float startY = panel.top - padding - slotSize * 0.5f;
+	const float renderedLeft = panel.left - 2.0f;
+	const float renderedTop = panel.top + 2.0f;
+	const float renderedWidth = panel.width + 4.0f;
+	const float renderedHeight = panel.height + 4.0f;
+	auto frameX = [renderedLeft, renderedWidth](float textureX)
+	{
+		return renderedLeft + textureX * renderedWidth / UiInventoryFrameWidth;
+	};
+	auto frameY = [renderedTop, renderedHeight](float textureY)
+	{
+		return renderedTop - textureY * renderedHeight / UiInventoryFrameHeight;
+	};
+	auto frameW = [renderedWidth](float textureWidth)
+	{
+		return textureWidth * renderedWidth / UiInventoryFrameWidth;
+	};
+	auto frameH = [renderedHeight](float textureHeight)
+	{
+		return textureHeight * renderedHeight / UiInventoryFrameHeight;
+	};
+
+	const int pageCount = (InventorySlotCount + InventoryVisibleSlotCount - 1) / InventoryVisibleSlotCount;
+	const int currentPage = std::clamp(m_selectedInventorySlot / InventoryVisibleSlotCount, 0, (std::max)(0, pageCount - 1));
+	const int firstSlot = currentPage * InventoryVisibleSlotCount;
+	const int lastSlot = (std::min)(InventorySlotCount, firstSlot + InventoryVisibleSlotCount);
+	const float cellWidth = frameW(InventoryCellWidth);
+	const float cellHeight = frameH(InventoryCellHeight);
+	const float slotIconSize = (std::min)(cellWidth, cellHeight) * 0.58f;
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
 	const int hoveredSlot = GetCursorViewPosition(cursorX, cursorY) ? GetInventorySlotAt(cursorX, cursorY) : -1;
 
-	for (int slot = 0; slot < InventorySlotCount; ++slot)
+	for (int slot = firstSlot; slot < lastSlot; ++slot)
 	{
-		const int column = slot % columns;
-		const int row = slot / columns;
-		const float slotX = startX + column * (slotSize + slotGap);
-		const float slotY = startY - row * (slotSize + slotGap);
+		const int visibleSlot = slot - firstSlot;
+		const int column = visibleSlot % InventoryVisibleColumns;
+		const int row = visibleSlot / InventoryVisibleColumns;
+		const float slotX = frameX(InventoryGridX + static_cast<float>(column) * InventoryCellWidth + InventoryCellWidth * 0.5f);
+		const float slotY = frameY(InventoryGridY + static_cast<float>(row) * InventoryCellHeight + InventoryCellHeight * 0.5f);
 		const bool selected = slot == m_selectedInventorySlot;
 		const bool hovered = slot == hoveredSlot;
 
-		const float fillR = selected ? 0.42f : (hovered ? 0.22f : UiThemeBodyDarkR);
-		const float fillG = selected ? 0.18f : (hovered ? 0.24f : UiThemeBodyDarkG);
-		const float fillB = selected ? 0.05f : (hovered ? 0.26f : UiThemeBodyDarkB);
-		const float fillA = selected ? 0.94f : (hovered ? 0.86f : 0.80f);
-
-		DrawSolidRect(slotX, slotY, slotSize, slotSize,
-			UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, selected ? 0.92f : 0.56f, -6.55f);
-		DrawSolidRect(slotX, slotY, slotSize - 2.0f, slotSize - 2.0f,
-			fillR, fillG, fillB, fillA, -6.65f);
-		DrawSolidRect(slotX - slotSize * 0.5f + 0.5f, slotY, 1.0f, slotSize,
-			UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.78f, -6.75f);
-		DrawSolidRect(slotX, slotY + slotSize * 0.5f - 0.5f, slotSize, 1.0f,
-			UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.78f, -6.76f);
-		DrawSolidRect(slotX + slotSize * 0.5f - 0.5f, slotY, 1.0f, slotSize,
-			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, hovered || selected ? 0.66f : 0.28f, -6.77f);
-		DrawSolidRect(slotX, slotY - slotSize * 0.5f + 0.5f, slotSize, 1.0f,
-			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, hovered || selected ? 0.60f : 0.24f, -6.78f);
+		if (hovered)
+		{
+			DrawSolidRect(slotX, slotY, cellWidth - 4.0f, cellHeight - 4.0f,
+				0.20f, 0.32f, 0.35f, 0.42f, -7.02f);
+		}
 
 		if (selected)
 		{
 			RectOutlineDesc selectionDesc;
 			selectionDesc.positionX = slotX;
 			selectionDesc.positionY = slotY;
-			selectionDesc.width = slotSize - 1.0f;
-			selectionDesc.height = slotSize - 1.0f;
-			selectionDesc.thickness = 1.2f;
-			selectionDesc.colorR = 0.96f;
-			selectionDesc.colorG = 0.86f;
-			selectionDesc.colorB = 0.70f;
-			selectionDesc.colorA = 0.82f;
+			selectionDesc.width = cellWidth - 5.0f;
+			selectionDesc.height = cellHeight - 5.0f;
+			selectionDesc.thickness = 2.0f;
+			selectionDesc.colorR = 0.76f;
+			selectionDesc.colorG = 0.53f;
+			selectionDesc.colorB = 0.28f;
+			selectionDesc.colorA = 0.98f;
 			selectionDesc.depth = -7.05f;
 			m_renderer->DrawRectOutline(selectionDesc);
 		}
 
 		if (IsInventoryWeaponSlot(slot))
-			DrawWeaponIcon(slotX, slotY + slotSize * 0.06f, slotSize * 0.70f, -7.4f, m_inventoryCounts[slot] > 0 ? 1.0f : 0.24f, slot);
+		{
+			DrawWeaponIcon(slotX, slotY + cellHeight * 0.18f, slotIconSize, -7.4f, m_inventoryCounts[slot] > 0 ? 1.0f : 0.24f, slot);
+		}
+		else if (IsInventoryBlockSlot(slot))
+		{
+			SpriteDesc blockDesc;
+			blockDesc.textureFile = BlockAtlasTexture;
+			blockDesc.positionX = slotX;
+			blockDesc.positionY = slotY + cellHeight * 0.18f;
+			blockDesc.width = slotIconSize;
+			blockDesc.height = slotIconSize;
+			blockDesc.atlasColumns = BlockAtlasColumns;
+			blockDesc.atlasRows = BlockAtlasRows;
+			blockDesc.tileIndex = InventoryTileIndices[slot];
+			blockDesc.colorA = m_inventoryCounts[slot] > 0 ? 1.0f : 0.28f;
+			blockDesc.depth = -7.4f;
+			m_renderer->DrawSprite(blockDesc);
+		}
+
+		if (m_inventoryCounts[slot] > 0)
+		{
+			char countText[8] = {};
+			std::snprintf(countText, sizeof(countText), "%d", m_inventoryCounts[slot]);
+			DrawUiText(slotX - GetUiTextWidth(countText, 1.10f) * 0.5f, slotY - cellHeight * 0.25f, countText, 1.10f,
+				UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+		}
 	}
 
-	for (int slot = 0; slot < InventorySlotCount; ++slot)
-	{
-		if (!IsInventoryBlockSlot(slot))
-			continue;
-
-		const int column = slot % columns;
-		const int row = slot / columns;
-		const float slotX = startX + column * (slotSize + slotGap);
-		const float slotY = startY - row * (slotSize + slotGap);
-		SpriteDesc blockDesc;
-		blockDesc.textureFile = BlockAtlasTexture;
-		blockDesc.positionX = slotX;
-		blockDesc.positionY = slotY + slotSize * 0.06f;
-		blockDesc.width = slotSize * 0.62f;
-		blockDesc.height = slotSize * 0.62f;
-		blockDesc.atlasColumns = BlockAtlasColumns;
-		blockDesc.atlasRows = BlockAtlasRows;
-		blockDesc.tileIndex = InventoryTileIndices[slot];
-		blockDesc.colorA = m_inventoryCounts[slot] > 0 ? 1.0f : 0.28f;
-		blockDesc.depth = -7.4f;
-		m_renderer->DrawSprite(blockDesc);
-	}
-
-	for (int slot = 0; slot < InventorySlotCount; ++slot)
-	{
-		if (m_inventoryCounts[slot] <= 0)
-			continue;
-
-		const int column = slot % columns;
-		const int row = slot / columns;
-		const float slotX = startX + column * (slotSize + slotGap);
-		const float slotY = startY - row * (slotSize + slotGap);
-
-		char countText[8] = {};
-		std::snprintf(countText, sizeof(countText), "%d", m_inventoryCounts[slot]);
-		DrawUiText(slotX - slotSize * 0.42f, slotY - slotSize * 0.28f, countText, 1.10f,
-			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
-	}
-
+	char pageText[16] = {};
+	std::snprintf(pageText, sizeof(pageText), "%d/%d", currentPage + 1, pageCount);
+	DrawUiText(frameX(36.0f), frameY(304.0f), pageText, 1.10f,
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
 }
 
 void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float depth, float alpha, int slot)
@@ -1253,7 +1250,12 @@ void GameEngine::DrawMinimap()
 {
 	const bool expanded = m_minimapExpanded;
 	const UiRect panel = GetRightPanelRect(0);
-	const bool compactPanelHasRoom = panel.width >= 150.0f && panel.height >= 72.0f;
+	const float compactMapInsetX = panel.width * (43.0f / UiMapFrameWidth);
+	const float compactMapInsetTop = panel.height * (55.0f / UiMapFrameHeight);
+	const float compactMapInsetBottom = panel.height * (30.0f / UiMapFrameHeight);
+	const float compactMapWidth = (std::max)(1.0f, panel.width - compactMapInsetX * 2.0f);
+	const float compactMapHeight = (std::max)(1.0f, panel.height - compactMapInsetTop - compactMapInsetBottom);
+	const bool compactPanelHasRoom = compactMapWidth >= 126.0f && compactMapHeight >= 52.0f;
 	const int sampleStep = expanded ? 1 : (compactPanelHasRoom ? 2 : 3);
 	const int centerTileX = std::clamp(WorldToTileX(m_cameraX), 0, m_blockWidth - 1);
 	const int centerTileY = std::clamp(WorldToTileY(m_cameraY), 0, m_blockHeight - 1);
@@ -1264,7 +1266,7 @@ void GameEngine::DrawMinimap()
 
 	if (!expanded)
 	{
-		const float panelAspect = (std::max)(1.0f, panel.width - 10.0f) / (std::max)(1.0f, panel.height - 10.0f);
+		const float panelAspect = compactMapWidth / compactMapHeight;
 		const int halfTilesY = 18;
 		const int halfTilesX = (std::max)(36, static_cast<int>(static_cast<float>(halfTilesY) * panelAspect * 1.12f + 0.5f));
 		startTileX = (std::max)(0, centerTileX - halfTilesX);
@@ -1285,14 +1287,14 @@ void GameEngine::DrawMinimap()
 	}
 	else
 	{
-		pixelSize = std::clamp((std::min)((panel.width - 8.0f) / static_cast<float>(sampleWidth), (panel.height - 8.0f) / static_cast<float>(sampleHeight)),
+		pixelSize = std::clamp((std::min)(compactMapWidth / static_cast<float>(sampleWidth), compactMapHeight / static_cast<float>(sampleHeight)),
 			0.85f, 9.0f);
 	}
 
 	const float mapWidth = sampleWidth * pixelSize;
 	const float mapHeight = sampleHeight * pixelSize;
-	const float mapLeft = expanded ? -mapWidth * 0.5f : panel.left + (panel.width - mapWidth) * 0.5f;
-	const float mapTop = expanded ? mapHeight * 0.5f : panel.top - (panel.height - mapHeight) * 0.5f;
+	const float mapLeft = expanded ? -mapWidth * 0.5f : panel.left + compactMapInsetX + (compactMapWidth - mapWidth) * 0.5f;
+	const float mapTop = expanded ? mapHeight * 0.5f : panel.top - compactMapInsetTop - (compactMapHeight - mapHeight) * 0.5f;
 	const float overlayDepth = expanded ? -18.0f : -5.2f;
 	const float mapPanelDepth = expanded ? -18.5f : -6.0f;
 	const float mapTileDepth = expanded ? -19.0f : -6.5f;
@@ -1307,6 +1309,11 @@ void GameEngine::DrawMinimap()
 	else
 	{
 		DrawClassicUiPanel(panel, "map");
+		DrawSolidRect(panel.left + compactMapInsetX + compactMapWidth * 0.5f,
+			panel.top - compactMapInsetTop - compactMapHeight * 0.5f,
+			compactMapWidth,
+			compactMapHeight,
+			UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.72f, -6.25f);
 	}
 
 	if (expanded)
@@ -1534,7 +1541,7 @@ void GameEngine::DrawPlayerStatus()
 	DrawSolidRect(x + 67.0f, y - 16.0f, 122.0f, 7.0f,
 		UiThemeBodyDarkR, UiThemeBodyDarkG, UiThemeBodyDarkB, 0.92f, -7.0f);
 	DrawSolidRect(x + 6.0f + 122.0f * healthRatio * 0.5f, y - 16.0f,
-		122.0f * healthRatio, 5.0f, 0.72f, 0.80f, 0.45f, 1.0f, -8.0f);
+		122.0f * healthRatio, 5.0f, 0.54f, 0.52f, 0.72f, 1.0f, -8.0f);
 }
 
 void GameEngine::DrawNetworkStatus()
@@ -1552,16 +1559,16 @@ void GameEngine::DrawNetworkStatus()
 
 	const UiRect panel = GetRightPanelRect(0);
 	DrawUiText(panel.left + 12.0f, panel.top - 50.0f, statusText, 1.20f,
-		0.76f, 0.70f, 0.64f, 0.96f, -8.0f);
+		UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 0.96f, -8.0f);
 }
 
 void GameEngine::DrawPlayerStatsPanel()
 {
 	const UiRect panel = GetRightPanelRect(2);
 	DrawUiPanel(panel, "status");
-	const float left = panel.left;
-	const float top = panel.top;
-	const float contentTop = top - 13.0f;
+	const float contentLeft = panel.left + panel.width * (40.0f / UiStatusFrameWidth);
+	const float contentTop = panel.top - panel.height * (64.0f / UiStatusFrameHeight);
+	const float lineHeight = panel.height * (32.0f / UiStatusFrameHeight);
 
 	auto drawPanelText = [this](float x, float y, const char* text, float size,
 		float colorR, float colorG, float colorB)
@@ -1587,13 +1594,13 @@ void GameEngine::DrawPlayerStatsPanel()
 	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", GetSelectedChopSpeedMultiplier());
 	std::snprintf(gearText, sizeof(gearText), "장비 %s", equipment.name);
 
-	drawPanelText(left + 12.0f, contentTop, hpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(left + 12.0f, contentTop - 18.0f, attackText, 1.35f, 0.80f, 0.72f, 0.64f);
-	drawPanelText(left + 96.0f, contentTop - 18.0f, defenseText, 1.35f, 0.80f, 0.72f, 0.64f);
-	drawPanelText(left + 12.0f, contentTop - 36.0f, speedText, 1.35f, 0.74f, 0.68f, 0.62f);
-	drawPanelText(left + 96.0f, contentTop - 36.0f, jumpText, 1.35f, 0.74f, 0.68f, 0.62f);
-	drawPanelText(left + 12.0f, contentTop - 54.0f, chopText, 1.35f, 0.74f, 0.68f, 0.62f);
-	drawPanelText(left + 12.0f, contentTop - 73.0f, gearText, 1.30f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop, hpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop - lineHeight, attackText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop - lineHeight * 2.0f, defenseText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop - lineHeight * 3.0f, speedText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop - lineHeight * 4.0f, jumpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop - lineHeight * 5.0f, chopText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(contentLeft, contentTop - lineHeight * 6.0f, gearText, 1.30f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
 }
 
 void GameEngine::DrawEquipmentTooltip()
@@ -1647,11 +1654,8 @@ void GameEngine::DrawEquipmentTooltip()
 	auto drawTipText = [this, tooltipTextShadowDepth, tooltipTextDepth](float x, float y, const char* text, float size,
 		float colorR, float colorG, float colorB)
 	{
-		(void)colorR;
-		(void)colorG;
-		(void)colorB;
-		DrawText(x + 1.0f, y - 1.0f, text, size, 0.0f, 0.0f, 0.0f, 0.76f, tooltipTextShadowDepth);
-		DrawText(x, y, text, size, 1.0f, 1.0f, 1.0f, 1.0f, tooltipTextDepth);
+		DrawText(x + 1.0f, y - 1.0f, text, size, UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.76f, tooltipTextShadowDepth);
+		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, tooltipTextDepth);
 	};
 
 	char attackText[32] = {};
@@ -1719,18 +1723,20 @@ void GameEngine::DrawCraftingPanel()
 		const float rowCenterY = layout.firstRowCenterY - visibleIndex * layout.rowHeight;
 		const bool hovered = hoveredRecipe == recipe;
 
-		DrawSolidRect(rowCenterX, rowCenterY, listWidth, layout.rowHeight,
-			hovered ? 0.42f : UiThemeBodyDarkR,
-			hovered ? 0.18f : UiThemeBodyDarkG,
-			hovered ? 0.05f : UiThemeBodyDarkB,
-			hovered ? 0.92f : 0.18f,
+		DrawSolidRect(rowCenterX, rowCenterY, listWidth, layout.rowHeight - 2.0f,
+			hovered ? 0.28f : UiThemeBodyR,
+			hovered ? 0.39f : UiThemeBodyG,
+			hovered ? 0.46f : UiThemeBodyB,
+			hovered ? 0.96f : 0.72f,
 			-6.8f);
-		DrawSolidRect(rowCenterX, rowCenterY - layout.rowHeight * 0.5f + 0.5f, listWidth, 1.0f,
-			UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 0.62f, -7.1f);
+		DrawSolidRect(rowCenterX, rowCenterY + layout.rowHeight * 0.5f - 1.0f, listWidth, 1.0f,
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, hovered ? 0.46f : 0.22f, -7.1f);
+		DrawSolidRect(rowCenterX, rowCenterY - layout.rowHeight * 0.5f + 1.0f, listWidth, 1.0f,
+			UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.70f, -7.1f);
 		drawPanelText(layout.left + 5.0f, rowCenterY + 2.0f, row.action, 1.14f,
-			1.0f,
-			1.0f,
-			1.0f,
+			row.craftable ? UiThemeCreamR : UiThemeMutedR,
+			row.craftable ? UiThemeCreamG : UiThemeMutedG,
+			row.craftable ? UiThemeCreamB : UiThemeMutedB,
 			-8.0f);
 	}
 
@@ -1741,7 +1747,7 @@ void GameEngine::DrawCraftingPanel()
 	DrawSolidRect(trackX, trackCenterY, trackWidth, trackHeight,
 		UiThemeBodyDarkR, UiThemeBodyDarkG, UiThemeBodyDarkB, 0.92f, -7.0f);
 	DrawSolidRect(layout.left + listWidth + 0.5f, trackCenterY, 1.0f, trackHeight,
-		UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 0.74f, -7.2f);
+		UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 0.70f, -7.2f);
 
 	const float thumbHeight = canScroll
 		? (std::max)(18.0f, trackHeight * (static_cast<float>(visibleRows) / static_cast<float>(recipeCount)))
@@ -1752,7 +1758,7 @@ void GameEngine::DrawCraftingPanel()
 		: 0.0f;
 	const float thumbCenterY = layout.top - thumbHeight * 0.5f - scrollRange * scrollT;
 	DrawSolidRect(trackX, thumbCenterY, trackWidth - 2.0f, thumbHeight,
-		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, canScroll ? 0.88f : 0.38f, -7.8f);
+		0.54f, 0.52f, 0.72f, canScroll ? 0.92f : 0.42f, -7.8f);
 	if (!canScroll)
 	{
 		DrawSolidRect(trackX, trackCenterY, 2.0f, trackHeight - 4.0f,
@@ -1764,9 +1770,9 @@ void GameEngine::DrawDebugLogPanel()
 {
 	const UiRect panel = GetLogPanelRect();
 	DrawUiPanel(panel, m_showRenderStats ? "performance" : "log");
-	const float x = panel.left + 12.0f;
-	const float y = panel.top - 13.0f;
-	const float maxTextWidth = (std::max)(24.0f, panel.width - 24.0f);
+	const float x = panel.left + panel.width * (38.0f / UiLogFrameWidth);
+	const float y = panel.top - panel.height * (70.0f / UiInventoryFrameHeight);
+	const float maxTextWidth = (std::max)(24.0f, panel.width * (548.0f / UiLogFrameWidth));
 	const char* text = m_statusTextTimer > 0.0f ? m_statusText.data() : nullptr;
 
 	char fpsText[24] = {};
@@ -1775,28 +1781,28 @@ void GameEngine::DrawDebugLogPanel()
 	std::snprintf(fpsText, sizeof(fpsText), "프레임 %d", static_cast<int>(m_displayFps + 0.5f));
 	std::snprintf(frameText, sizeof(frameText), "지연 %.1fms", m_displayFrameMs);
 	std::snprintf(capText, sizeof(capText), m_frameLimitEnabled ? "제한 %03d" : "제한 끔", m_targetRefreshRate);
-	const float frameTextX = x + (std::max)(132.0f, GetUiTextWidth(fpsText, 1.32f) + 28.0f);
-	const float capTextX = frameTextX + (std::max)(118.0f, GetUiTextWidth(frameText, 1.20f) + 30.0f);
+	const float frameTextX = panel.left + panel.width * (210.0f / UiLogFrameWidth);
+	const float capTextX = panel.left + panel.width * (386.0f / UiLogFrameWidth);
 	DrawUiText(x, y, fpsText, 1.32f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
-	DrawUiText(frameTextX, y, frameText, 1.20f, 0.80f, 0.72f, 0.64f, 1.0f, -8.0f);
-	DrawUiText(capTextX, y, capText, 1.16f, 0.70f, 0.64f, 0.58f, 1.0f, -8.0f);
+	DrawUiText(frameTextX, y, frameText, 1.20f, UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 1.0f, -8.0f);
+	DrawUiText(capTextX, y, capText, 1.16f, 0.56f, 0.66f, 0.72f, 1.0f, -8.0f);
 
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
 	const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
-	const float buttonY = panel.top - 53.0f;
-	const float buttonHeight = 20.0f;
-	const float perfX = panel.left + 46.0f;
-	const float capX = panel.left + 122.0f;
-	const float revealX = panel.left + 205.0f;
+	const float buttonY = panel.top - panel.height * (124.0f / UiInventoryFrameHeight);
+	const float buttonHeight = panel.height * (34.0f / UiInventoryFrameHeight);
+	const float perfX = panel.left + panel.width * (92.0f / UiLogFrameWidth);
+	const float capX = panel.left + panel.width * (214.0f / UiLogFrameWidth);
+	const float revealX = panel.left + panel.width * (345.0f / UiLogFrameWidth);
 
 	auto drawDebugButton = [&](float centerX, float width, const char* text)
 	{
 		const bool hovered = hasCursor && IsPointInsideRect(cursorX, cursorY, centerX, buttonY, width, buttonHeight);
 		DrawSolidRect(centerX, buttonY, width, buttonHeight,
-			hovered ? 0.42f : UiThemeBodyDarkR,
-			hovered ? 0.18f : UiThemeBodyDarkG,
-			hovered ? 0.05f : UiThemeBodyDarkB,
+			hovered ? 0.30f : UiThemeBodyR,
+			hovered ? 0.40f : UiThemeBodyG,
+			hovered ? 0.48f : UiThemeBodyB,
 			0.94f, -8.5f);
 
 		RectOutlineDesc outline;
@@ -1805,27 +1811,27 @@ void GameEngine::DrawDebugLogPanel()
 		outline.width = width;
 		outline.height = buttonHeight;
 		outline.thickness = hovered ? 1.8f : 1.1f;
-		outline.colorR = UiThemeCreamR;
-		outline.colorG = UiThemeCreamG;
-		outline.colorB = UiThemeCreamB;
-		outline.colorA = 0.92f;
+		outline.colorR = hovered ? UiThemeCreamR : UiThemeMutedR;
+		outline.colorG = hovered ? UiThemeCreamG : UiThemeMutedG;
+		outline.colorB = hovered ? UiThemeCreamB : UiThemeMutedB;
+		outline.colorA = hovered ? 0.96f : 0.82f;
 		outline.depth = -8.9f;
 		m_renderer->DrawRectOutline(outline);
 
 		DrawCenteredUiText(centerX, buttonY + 4.5f, text, 1.02f,
-			hovered ? UiThemeBodyDarkR : UiThemeCreamR,
-			hovered ? UiThemeBodyDarkG : UiThemeCreamG,
-			hovered ? UiThemeBodyDarkB : UiThemeCreamB,
+			hovered ? UiThemeCreamR : UiThemeMutedR,
+			hovered ? UiThemeCreamG : UiThemeMutedG,
+			hovered ? UiThemeCreamB : UiThemeMutedB,
 			1.0f, -9.1f);
 	};
 
 	char perfText[24] = {};
 	std::snprintf(perfText, sizeof(perfText), m_showRenderStats ? "성능 켬" : "성능");
-	drawDebugButton(perfX, 68.0f, perfText);
-	drawDebugButton(capX, 68.0f, "제한");
-	drawDebugButton(revealX, 78.0f, "지도 공개");
+	drawDebugButton(perfX, panel.width * (92.0f / UiLogFrameWidth), perfText);
+	drawDebugButton(capX, panel.width * (92.0f / UiLogFrameWidth), "제한");
+	drawDebugButton(revealX, panel.width * (118.0f / UiLogFrameWidth), "지도 공개");
 
-	float lineY = y - 49.0f;
+	float lineY = panel.top - panel.height * (188.0f / UiInventoryFrameHeight);
 	const float minLineY = panel.top - panel.height + 12.0f;
 	auto drawLine = [this, x, maxTextWidth, &lineY, minLineY](const char* lineText, float colorR, float colorG, float colorB)
 	{
@@ -1847,9 +1853,9 @@ void GameEngine::DrawDebugLogPanel()
 			if (lineY < minLineY)
 				return;
 
-			DrawUiText(leftX, lineY, leftText, 0.84f, 0.72f, 0.66f, 0.60f, 1.0f, -8.0f);
+			DrawUiText(leftX, lineY, leftText, 0.84f, 0.50f, 0.62f, 0.66f, 1.0f, -8.0f);
 			if (rightText != nullptr && rightText[0] != '\0')
-				DrawUiText(rightX, lineY, rightText, 0.84f, 0.72f, 0.66f, 0.60f, 1.0f, -8.0f);
+				DrawUiText(rightX, lineY, rightText, 0.84f, 0.50f, 0.62f, 0.66f, 1.0f, -8.0f);
 			lineY -= 11.5f;
 		};
 
@@ -1943,7 +1949,7 @@ void GameEngine::DrawDebugLogPanel()
 				std::snprintf(networkText, sizeof(networkText), "통신 참가 대기");
 			else
 				std::snprintf(networkText, sizeof(networkText), "통신 %s %s / %s", GetNetworkModeText(), GetLocalNickname(), peerText);
-			drawLine(networkText, 0.72f, 0.66f, 0.60f);
+			drawLine(networkText, UiThemeMutedR, UiThemeMutedG, UiThemeMutedB);
 		}
 	}
 
@@ -1959,25 +1965,11 @@ void GameEngine::DrawDebugLogPanel()
 		m_selectedInventorySlot + 1,
 		selectedName,
 		m_inventoryCounts[m_selectedInventorySlot]);
-	drawLine(selectedText, 0.70f, 0.64f, 0.58f);
+	drawLine(selectedText, UiThemeMutedR, UiThemeMutedG, UiThemeMutedB);
 }
 
 void GameEngine::DrawUiShell()
 {
-	const UiRect game = GetGameViewportRect();
-
-	SpriteDesc frameDesc;
-	frameDesc.textureFile = GetUiPanelTextureFile("game");
-	frameDesc.positionX = game.left + game.width * 0.5f;
-	frameDesc.positionY = game.top - game.height * 0.5f;
-	frameDesc.width = game.width + 8.0f;
-	frameDesc.height = game.height + 8.0f;
-	frameDesc.colorR = 1.0f;
-	frameDesc.colorG = 1.0f;
-	frameDesc.colorB = 1.0f;
-	frameDesc.colorA = 1.0f;
-	frameDesc.depth = -9.3f;
-	m_renderer->DrawSprite(frameDesc);
 }
 
 void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
@@ -2000,14 +1992,49 @@ void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
 	panelDesc.depth = depth + 0.20f;
 	m_renderer->DrawSprite(panelDesc);
 
-	if (title != nullptr && title[0] != '\0')
+	const char* displayTitle = GetUiPanelDisplayTitle(title);
+	if (displayTitle != nullptr && displayTitle[0] != '\0')
 	{
-		const float titleSize = 1.06f;
-		const float titleX = centerX - GetUiTextWidth(title, titleSize) * 0.5f;
-		DrawText(titleX + 1.0f, rect.top + 6.0f, title, titleSize,
-			0.0f, 0.0f, 0.0f, 0.72f, depth - 1.15f);
-		DrawText(titleX, rect.top + 7.0f, title, titleSize,
-			1.0f, 1.0f, 1.0f, 1.0f, depth - 1.35f);
+		const float titleSize = 1.45f;
+		float sourceWidth = UiMapFrameWidth;
+		float sourceHeight = UiMapFrameHeight;
+		float titleCenterTextureX = sourceWidth * 0.5f;
+		if (std::strcmp(title, "inventory") == 0)
+		{
+			sourceWidth = UiInventoryFrameWidth;
+			sourceHeight = UiInventoryFrameHeight;
+			titleCenterTextureX = InventorySidebarWidth + (UiInventoryFrameWidth - InventorySidebarWidth) * 0.5f;
+		}
+		else if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0)
+		{
+			sourceWidth = UiLogFrameWidth;
+			sourceHeight = UiInventoryFrameHeight;
+			titleCenterTextureX = sourceWidth * 0.5f;
+		}
+		else if (std::strcmp(title, "craft") == 0)
+		{
+			sourceWidth = UiCraftFrameWidth;
+			sourceHeight = UiCraftFrameHeight;
+			titleCenterTextureX = sourceWidth * 0.5f;
+		}
+		else if (std::strcmp(title, "status") == 0)
+		{
+			sourceWidth = UiStatusFrameWidth;
+			sourceHeight = UiStatusFrameHeight;
+			titleCenterTextureX = sourceWidth * 0.5f;
+		}
+
+		const float renderedLeft = rect.left - 2.0f;
+		const float renderedTop = rect.top + 2.0f;
+		const float renderedWidth = rect.width + 4.0f;
+		const float renderedHeight = rect.height + 4.0f;
+		const float titleCenterX = renderedLeft + titleCenterTextureX * renderedWidth / sourceWidth;
+		const float titleY = renderedTop - 22.0f * renderedHeight / sourceHeight;
+		const float titleX = titleCenterX - GetUiTextWidth(displayTitle, titleSize) * 0.5f;
+		DrawText(titleX + 1.0f, titleY - 1.0f, displayTitle, titleSize,
+			0.01f, 0.02f, 0.03f, 0.86f, depth - 1.15f);
+		DrawText(titleX, titleY, displayTitle, titleSize,
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, depth - 1.35f);
 	}
 }
 
@@ -2018,11 +2045,9 @@ void GameEngine::DrawClassicUiPanel(const UiRect& rect, const char* title, float
 
 void GameEngine::DrawUiText(float x, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
 {
-	(void)colorR;
-	(void)colorG;
-	(void)colorB;
-	DrawText(x + 1.0f, y - 1.0f, text, pixelSize, 0.0f, 0.0f, 0.0f, colorA * 0.74f, depth + 0.24f);
-	DrawText(x, y, text, pixelSize, 1.0f, 1.0f, 1.0f, colorA, depth);
+	DrawText(x + 1.0f, y - 1.0f, text, pixelSize,
+		UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, colorA * 0.78f, depth + 0.24f);
+	DrawText(x, y, text, pixelSize, colorR, colorG, colorB, colorA, depth);
 }
 
 void GameEngine::DrawCenteredUiText(float centerX, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
@@ -2278,11 +2303,11 @@ GameEngine::CraftingPanelLayout GameEngine::GetCraftingPanelLayout() const
 {
 	CraftingPanelLayout layout;
 	const UiRect panel = GetRightPanelRect(1);
-	layout.left = panel.left + 4.0f;
-	layout.top = panel.top - 4.0f;
-	layout.width = panel.width - 8.0f;
-	layout.height = panel.height - 8.0f;
-	layout.rowHeight = 20.0f;
+	layout.left = panel.left + panel.width * (38.0f / UiCraftFrameWidth);
+	layout.top = panel.top - panel.height * (58.0f / UiCraftFrameHeight);
+	layout.width = panel.width * (400.0f / UiCraftFrameWidth);
+	layout.height = panel.height * (286.0f / UiCraftFrameHeight);
+	layout.rowHeight = panel.height * (28.0f / UiCraftFrameHeight);
 	layout.firstRowCenterY = layout.top - layout.rowHeight * 0.5f;
 	return layout;
 }
@@ -2293,16 +2318,17 @@ GameEngine::UiRect GameEngine::GetGameViewportRect() const
 	const float viewHalfHeight = GetViewHalfHeight();
 	const float fullWidth = viewHalfWidth * 2.0f;
 	const float fullHeight = viewHalfHeight * 2.0f;
-	const float gap = 8.0f;
-	const float rightPanelWidth = std::clamp(fullWidth * 0.29f, 260.0f, 360.0f);
-	const float gameWidth = (std::max)(fullWidth - rightPanelWidth - gap, fullWidth * 0.55f);
-	const float gameHeight = (std::max)(fullHeight * 0.48f, fullHeight - fullHeight * 0.28f);
+	const float gap = UiPanelGap;
+	const float rightPanelWidth = std::clamp(fullWidth * (UiMockupRightColumnWidth / UiMockupWidth), 260.0f, 520.0f);
+	const float bottomHeight = fullHeight * (UiMockupBottomHeight / UiMockupHeight);
+	const float gameWidth = fullWidth - rightPanelWidth - gap;
+	const float gameHeight = fullHeight - bottomHeight - gap;
 
 	UiRect rect;
 	rect.left = -viewHalfWidth;
 	rect.top = viewHalfHeight;
-	rect.width = (std::min)(gameWidth, fullWidth - rightPanelWidth - gap);
-	rect.height = (std::min)(gameHeight, fullHeight - gap * 2.0f);
+	rect.width = (std::max)(120.0f, gameWidth);
+	rect.height = (std::max)(120.0f, gameHeight);
 	return rect;
 }
 
@@ -2310,28 +2336,17 @@ GameEngine::UiRect GameEngine::GetInventoryPanelRect() const
 {
 	const UiRect game = GetGameViewportRect();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float gap = 8.0f;
+	const float gap = UiPanelGap;
 	const float bottomTop = game.top - game.height - gap;
 	const float bottomBottom = -viewHalfHeight + gap;
 	const float bottomHeight = (std::max)(80.0f, bottomTop - bottomBottom);
-	constexpr int inventoryColumns = 10;
-	constexpr int inventoryRows = (InventorySlotCount + inventoryColumns - 1) / inventoryColumns;
-	constexpr float inventoryPadding = 4.0f;
-	constexpr float inventorySlotGap = 0.0f;
-	const float heightFittedSlotSize = std::clamp(
-		(bottomHeight - inventoryPadding * 2.0f - inventorySlotGap * static_cast<float>(inventoryRows - 1)) / static_cast<float>(inventoryRows),
-		18.0f,
-		40.0f);
-	const float fittedGridWidth =
-		heightFittedSlotSize * static_cast<float>(inventoryColumns) +
-		inventorySlotGap * static_cast<float>(inventoryColumns - 1) +
-		inventoryPadding * 2.0f;
 	const float maxInventoryWidth = (std::max)(80.0f, game.width - gap - 80.0f);
+	const float targetInventoryWidth = game.width * (UiInventoryFrameWidth / (UiInventoryFrameWidth + UiLogFrameWidth));
 
 	UiRect rect;
-	rect.left = game.left + gap;
+	rect.left = game.left;
 	rect.top = bottomTop;
-	rect.width = (std::min)(fittedGridWidth, maxInventoryWidth);
+	rect.width = (std::min)(targetInventoryWidth, maxInventoryWidth);
 	rect.height = bottomHeight;
 	return rect;
 }
@@ -2341,14 +2356,14 @@ GameEngine::UiRect GameEngine::GetLogPanelRect() const
 	const UiRect game = GetGameViewportRect();
 	const UiRect inventory = GetInventoryPanelRect();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float gap = 8.0f;
+	const float gap = UiPanelGap;
 	const float bottomTop = game.top - game.height - gap;
 	const float bottomBottom = -viewHalfHeight + gap;
 
 	UiRect rect;
 	rect.left = inventory.left + inventory.width + gap;
 	rect.top = bottomTop;
-	rect.width = (std::max)(80.0f, game.left + game.width - rect.left - gap);
+	rect.width = (std::max)(80.0f, game.left + game.width - rect.left);
 	rect.height = (std::max)(80.0f, bottomTop - bottomBottom);
 	return rect;
 }
@@ -2358,31 +2373,30 @@ GameEngine::UiRect GameEngine::GetRightPanelRect(int panelIndex) const
 	const UiRect game = GetGameViewportRect();
 	const float viewHalfWidth = GetViewHalfWidth();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float gap = 8.0f;
+	const float gap = UiPanelGap;
 	const float left = game.left + game.width + gap;
-	const float totalHeight = viewHalfHeight * 2.0f - gap * 2.0f;
+	const float totalHeight = viewHalfHeight * 2.0f;
 	const int safeIndex = std::clamp(panelIndex, 0, 2);
-	const float mapHeight = std::clamp(totalHeight * 0.18f, 96.0f, 132.0f);
-	const float remainingHeight = (std::max)(120.0f, totalHeight - mapHeight - gap * 2.0f);
-	const float craftHeight = remainingHeight * 0.58f;
-	const float heroHeight = remainingHeight - craftHeight;
+	const float mapHeight = totalHeight * (UiMapFrameHeight / UiMockupHeight);
+	const float craftHeight = totalHeight * (UiCraftFrameHeight / UiMockupHeight);
+	const float heroHeight = (std::max)(80.0f, totalHeight - mapHeight - craftHeight);
 
 	UiRect rect;
 	rect.left = left;
-	rect.width = (std::max)(120.0f, viewHalfWidth - gap - left);
+	rect.width = (std::max)(120.0f, viewHalfWidth - left);
 	if (safeIndex == 0)
 	{
-		rect.top = viewHalfHeight - gap;
+		rect.top = viewHalfHeight;
 		rect.height = mapHeight;
 	}
 	else if (safeIndex == 1)
 	{
-		rect.top = viewHalfHeight - gap - mapHeight - gap;
+		rect.top = viewHalfHeight - mapHeight - gap;
 		rect.height = craftHeight;
 	}
 	else
 	{
-		rect.top = viewHalfHeight - gap - mapHeight - gap - craftHeight - gap;
+		rect.top = viewHalfHeight - mapHeight - gap - craftHeight - gap;
 		rect.height = heroHeight;
 	}
 	return rect;
@@ -2472,33 +2486,32 @@ int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 int GameEngine::GetInventorySlotAt(float viewX, float viewY) const
 {
 	const UiRect panel = GetInventoryPanelRect();
-	const int columns = 10;
-	const int rows = (InventorySlotCount + columns - 1) / columns;
-	const float padding = 4.0f;
-	const float slotGap = 0.0f;
-	const float slotSize = std::clamp((std::min)(
-		(panel.width - padding * 2.0f - slotGap * static_cast<float>(columns - 1)) / static_cast<float>(columns),
-		(panel.height - padding * 2.0f - slotGap * static_cast<float>(rows - 1)) / static_cast<float>(rows)),
-		18.0f, 40.0f);
-	const float startX = panel.left + padding + slotSize * 0.5f;
-	const float startY = panel.top - padding - slotSize * 0.5f;
+	const float renderedLeft = panel.left - 2.0f;
+	const float renderedTop = panel.top + 2.0f;
+	const float renderedWidth = panel.width + 4.0f;
+	const float renderedHeight = panel.height + 4.0f;
+	if (renderedWidth <= 0.0f || renderedHeight <= 0.0f)
+		return -1;
 
-	for (int slot = 0; slot < InventorySlotCount; ++slot)
+	const float textureX = (viewX - renderedLeft) * UiInventoryFrameWidth / renderedWidth;
+	const float textureY = (renderedTop - viewY) * UiInventoryFrameHeight / renderedHeight;
+	const float gridWidth = InventoryCellWidth * static_cast<float>(InventoryVisibleColumns);
+	const float gridHeight = InventoryCellHeight * static_cast<float>(InventoryVisibleRows);
+	if (textureX < InventoryGridX || textureX >= InventoryGridX + gridWidth ||
+		textureY < InventoryGridY || textureY >= InventoryGridY + gridHeight)
 	{
-		const int column = slot % columns;
-		const int row = slot / columns;
-		const float slotX = startX + column * (slotSize + slotGap);
-		const float slotY = startY - row * (slotSize + slotGap);
-		if (viewX >= slotX - slotSize * 0.5f &&
-			viewX <= slotX + slotSize * 0.5f &&
-			viewY >= slotY - slotSize * 0.5f &&
-			viewY <= slotY + slotSize * 0.5f)
-		{
-			return slot;
-		}
+		return -1;
 	}
 
-	return -1;
+	const int column = static_cast<int>((textureX - InventoryGridX) / InventoryCellWidth);
+	const int row = static_cast<int>((textureY - InventoryGridY) / InventoryCellHeight);
+	if (column < 0 || column >= InventoryVisibleColumns || row < 0 || row >= InventoryVisibleRows)
+		return -1;
+
+	const int pageCount = (InventorySlotCount + InventoryVisibleSlotCount - 1) / InventoryVisibleSlotCount;
+	const int currentPage = std::clamp(m_selectedInventorySlot / InventoryVisibleSlotCount, 0, (std::max)(0, pageCount - 1));
+	const int slot = currentPage * InventoryVisibleSlotCount + row * InventoryVisibleColumns + column;
+	return slot < InventorySlotCount ? slot : -1;
 }
 
 bool GameEngine::IsCursorOverCraftingPanel() const

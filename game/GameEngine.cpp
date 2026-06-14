@@ -68,21 +68,43 @@ namespace
 	};
 	constexpr int BlockAtlasColumns = 16;
 	constexpr int BlockAtlasRows = 1;
-	constexpr float UiThemeCreamR = 0.92f;
-	constexpr float UiThemeCreamG = 0.96f;
-	constexpr float UiThemeCreamB = 0.92f;
-	constexpr float UiThemeMutedR = 0.36f;
-	constexpr float UiThemeMutedG = 0.48f;
-	constexpr float UiThemeMutedB = 0.46f;
-	constexpr float UiThemeBodyR = 0.006f;
-	constexpr float UiThemeBodyG = 0.010f;
-	constexpr float UiThemeBodyB = 0.012f;
-	constexpr float UiThemeBodyDarkR = 0.002f;
-	constexpr float UiThemeBodyDarkG = 0.004f;
-	constexpr float UiThemeBodyDarkB = 0.006f;
-	constexpr float UiThemeShadowR = 0.0f;
-	constexpr float UiThemeShadowG = 0.0f;
-	constexpr float UiThemeShadowB = 0.0f;
+	constexpr float UiThemeCreamR = 0.74f;
+	constexpr float UiThemeCreamG = 0.91f;
+	constexpr float UiThemeCreamB = 0.88f;
+	constexpr float UiThemeMutedR = 0.48f;
+	constexpr float UiThemeMutedG = 0.50f;
+	constexpr float UiThemeMutedB = 0.65f;
+	constexpr float UiThemeBodyR = 0.20f;
+	constexpr float UiThemeBodyG = 0.30f;
+	constexpr float UiThemeBodyB = 0.32f;
+	constexpr float UiThemeBodyDarkR = 0.08f;
+	constexpr float UiThemeBodyDarkG = 0.13f;
+	constexpr float UiThemeBodyDarkB = 0.15f;
+	constexpr float UiThemeShadowR = 0.01f;
+	constexpr float UiThemeShadowG = 0.02f;
+	constexpr float UiThemeShadowB = 0.03f;
+	constexpr float UiPanelGap = 0.0f;
+	constexpr float UiMockupWidth = 1653.0f;
+	constexpr float UiMockupHeight = 951.0f;
+	constexpr float UiMockupRightColumnWidth = 476.0f;
+	constexpr float UiMockupBottomHeight = 341.0f;
+	constexpr float UiInventoryFrameWidth = 548.0f;
+	constexpr float UiInventoryFrameHeight = 341.0f;
+	constexpr float UiLogFrameWidth = 629.0f;
+	constexpr float UiMapFrameWidth = 476.0f;
+	constexpr float UiMapFrameHeight = 198.0f;
+	constexpr float UiCraftFrameWidth = 476.0f;
+	constexpr float UiCraftFrameHeight = 376.0f;
+	constexpr float UiStatusFrameWidth = 476.0f;
+	constexpr float UiStatusFrameHeight = 377.0f;
+	constexpr int InventoryVisibleColumns = 7;
+	constexpr int InventoryVisibleRows = 4;
+	constexpr int InventoryVisibleSlotCount = InventoryVisibleColumns * InventoryVisibleRows;
+	constexpr float InventoryGridX = 131.0f;
+	constexpr float InventoryGridY = 55.0f;
+	constexpr float InventoryCellWidth = 53.0f;
+	constexpr float InventoryCellHeight = 56.0f;
+	constexpr float InventorySidebarWidth = 104.0f;
 
 	const WCHAR* GetUiPanelTextureFile(const char* title)
 	{
@@ -106,6 +128,28 @@ namespace
 			return UiPanelGameTexture;
 
 		return UiPanelDefaultTexture;
+	}
+
+	const char* GetUiPanelDisplayTitle(const char* title)
+	{
+		if (title == nullptr || title[0] == '\0' || std::strcmp(title, "game") == 0 || std::strcmp(title, "tooltip") == 0)
+			return "";
+		if (std::strcmp(title, "inventory") == 0)
+			return ".INVENTORY.";
+		if (std::strcmp(title, "log") == 0)
+			return ".LOG.";
+		if (std::strcmp(title, "performance") == 0)
+			return ".PERFORMANCE.";
+		if (std::strcmp(title, "map") == 0)
+			return ".MAP.";
+		if (std::strcmp(title, "craft") == 0)
+			return ".CRAFT.";
+		if (std::strcmp(title, "status") == 0)
+			return ".STATUS.";
+		if (std::strcmp(title, "network") == 0)
+			return ".NETWORK.";
+
+		return title;
 	}
 
 	struct BackgroundImageLayer

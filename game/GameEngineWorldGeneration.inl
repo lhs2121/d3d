@@ -1009,6 +1009,33 @@ void GameEngine::InitializeWorld()
 		return tile.visible != 0 && (tile.tileIndex == BlockWood || tile.tileIndex == BlockLeaves);
 	};
 
+	auto hasTreeSupport = [this](int tileX, int surfaceY)
+	{
+		if (!IsTileInBounds(tileX, surfaceY) || !IsSolidTile(tileX, surfaceY))
+			return false;
+
+		if (!IsTileInBounds(tileX, surfaceY + 1) || !IsSolidTile(tileX, surfaceY + 1))
+			return false;
+
+		return true;
+	};
+
+	auto hasClearTrunkColumn = [this](int tileX, int surfaceY, int trunkHeight)
+	{
+		for (int i = 1; i <= trunkHeight; ++i)
+		{
+			const int trunkY = surfaceY - i;
+			if (!IsTileInBounds(tileX, trunkY))
+				return false;
+
+			const BlockTile& tile = m_blocks[trunkY * m_blockWidth + tileX];
+			if (tile.visible != 0)
+				return false;
+		}
+
+		return true;
+	};
+
 	auto addLeafAnchor = [this](std::vector<int>& leafAnchors, int tileX, int tileY)
 	{
 		if (!IsTileInBounds(tileX, tileY))
@@ -1090,12 +1117,17 @@ void GameEngine::InitializeWorld()
 		const int surfaceY = surfaceHeights[x];
 		if (surfaceY < 7 || surfaceY > m_blockHeight - 8)
 			continue;
+		if (!hasTreeSupport(x, surfaceY))
+			continue;
 
 		const int treeChance = biome == BiomeGrassland ? 68 : (biome == BiomeDesert ? 12 : 26);
 		if (randomInt(0, 99) > treeChance)
 			continue;
 
 		const int trunkHeight = biome == BiomeDesert ? randomInt(3, 8) : (biome == BiomeIce ? randomInt(5, 12) : randomInt(4, 11));
+		if (!hasClearTrunkColumn(x, surfaceY, trunkHeight))
+			continue;
+
 		for (int i = 1; i <= trunkHeight; ++i)
 			setSkyBlock(x, surfaceY - i, BlockWood);
 
