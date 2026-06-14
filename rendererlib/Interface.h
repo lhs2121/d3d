@@ -95,15 +95,45 @@ struct TextDesc
 
 struct RenderFrameStats
 {
+	unsigned int backBufferWidth = 0;
+	unsigned int backBufferHeight = 0;
+	unsigned int viewportChanges = 0;
 	unsigned int drawCalls = 0;
 	unsigned int spriteDrawCalls = 0;
+	unsigned int fontDrawCalls = 0;
+	unsigned int glyphDrawCalls = 0;
 	unsigned int gridDrawCalls = 0;
 	unsigned int gridInstances = 0;
+	unsigned int gridVisibleColumns = 0;
+	unsigned int gridVisibleRows = 0;
+	unsigned int gridVisibleTiles = 0;
 	unsigned int gridChunksDrawn = 0;
 	unsigned int gridChunksRebuilt = 0;
+	unsigned int gridCacheInvalidations = 0;
 	unsigned int spriteQuads = 0;
+	unsigned int whiteQuads = 0;
+	unsigned int texturedQuads = 0;
+	unsigned int fontQuads = 0;
+	unsigned int glyphQuads = 0;
+	unsigned int spriteBatches = 0;
+	unsigned int fontBatches = 0;
+	unsigned int glyphBatches = 0;
+	unsigned int maxSpriteBatchQuads = 0;
+	unsigned int maxFontBatchQuads = 0;
+	unsigned int maxGlyphBatchQuads = 0;
+	unsigned int textDrawCalls = 0;
+	unsigned int textGlyphs = 0;
+	unsigned int fontGlyphsCached = 0;
+	unsigned int fontAtlasUploads = 0;
+	unsigned int fontAtlasUploadBytes = 0;
 	unsigned int rectOutlineCalls = 0;
 	unsigned int textureBinds = 0;
+	unsigned int dynamicBufferUploads = 0;
+	unsigned int dynamicBufferUploadBytes = 0;
+	unsigned int gridUploadBytes = 0;
+	unsigned int spriteUploadBytes = 0;
+	unsigned int fontUploadBytes = 0;
+	unsigned int glyphUploadBytes = 0;
 };
 
 struct IRenderer

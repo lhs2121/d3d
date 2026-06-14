@@ -15,6 +15,21 @@
     <ClInclude Include="GameEngine.h">
       <Filter>.h</Filter>
     </ClInclude>
+    <ClInclude Include="GameEngineGameplay.inl">
+      <Filter>.h</Filter>
+    </ClInclude>
+    <ClInclude Include="GameEngineNetwork.inl">
+      <Filter>.h</Filter>
+    </ClInclude>
+    <ClInclude Include="GameEngineRender.inl">
+      <Filter>.h</Filter>
+    </ClInclude>
+    <ClInclude Include="GameEngineWorldGeneration.inl">
+      <Filter>.h</Filter>
+    </ClInclude>
+    <ClInclude Include="GameEngineWorldQueries.inl">
+      <Filter>.h</Filter>
+    </ClInclude>
     <ClInclude Include="pch.h">
       <Filter>.h</Filter>
     </ClInclude>

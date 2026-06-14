@@ -2,7 +2,7 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemDefinitionGroup>
     <Link>
-      <AdditionalDependencies>commonlib.lib;inputlib.lib;collib.lib;windowlib.lib;rendererlib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>commonlib.lib;inputlib.lib;collib.lib;windowlib.lib;rendererlib.lib;networklib.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 </Project>

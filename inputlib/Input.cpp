@@ -3,10 +3,6 @@
 
 Input::~Input()
 {
-	for (auto& pair : m_keyStateMap)
-	{
-		delete pair.second;
-	}
 }
 
 void Input::Initialize()
@@ -140,8 +136,7 @@ void Input::Initialize()
 
 void Input::RegisterKey(int _keyCode)
 {
-	KeyState* newKey = new KeyState();
-	m_keyStateMap.insert({ _keyCode, newKey });
+	m_keyStateMap.emplace(_keyCode, KeyState());
 }
 
 void Input::Update()
@@ -149,7 +144,7 @@ void Input::Update()
 	for (auto& pair : m_keyStateMap)
 	{
 		int keyCode = pair.first;
-		KeyState* Key = pair.second;
+		KeyState* Key = &pair.second;
 		const bool isHeld = (GetAsyncKeyState(keyCode) & 0x8000) != 0;
 		if (!isHeld) // �ȴ�������
 		{
@@ -190,88 +185,78 @@ void Input::Update()
 	}
 }
 
-bool Input::IsDown(int _keyCode, void* _userPtr)
+bool Input::IsRegisteredUser(void* _userPtr) const
 {
-	bool IsUser = false;
 	for (void* UserPtr : m_userList)
 	{
 		if (UserPtr == _userPtr)
-		{
-			IsUser = true;
-			break;
-		}
+			return true;
 	}
 
-	if (IsUser == false)
-	{
+	return false;
+}
+
+KeyState* Input::FindKeyState(int _keyCode)
+{
+	auto iter = m_keyStateMap.find(_keyCode);
+	if (iter == m_keyStateMap.end())
+		return nullptr;
+
+	return &iter->second;
+}
+
+bool Input::IsDown(int _keyCode, void* _userPtr)
+{
+	if (!IsRegisteredUser(_userPtr))
 		return false;
-	}
 
-	return m_keyStateMap[_keyCode]->isDown;
-	
+	const KeyState* key = FindKeyState(_keyCode);
+	if (key == nullptr)
+		return false;
+
+	return key->isDown;
 }
 
 bool Input::IsPressed(int _keyCode, void* _userPtr)
 {
-	bool IsUser = false;
-	for (void* UserPtr : m_userList)
-	{
-		if (UserPtr == _userPtr)
-		{
-			IsUser = true;
-			break;
-		}
-	}
-
-	if (IsUser == false)
-	{
+	if (!IsRegisteredUser(_userPtr))
 		return false;
-	}
 
-	return  m_keyStateMap[_keyCode]->isPressed;
+	const KeyState* key = FindKeyState(_keyCode);
+	if (key == nullptr)
+		return false;
+
+	return key->isPressed;
 }
 
 bool Input::IsReleased(int _keyCode, void* _userPtr)
 {
-	bool IsUser = false;
-	for (void* UserPtr : m_userList)
-	{
-		if (UserPtr == _userPtr)
-		{
-			IsUser = true;
-			break;
-		}
-	}
-
-	if (IsUser == false)
-	{
+	if (!IsRegisteredUser(_userPtr))
 		return false;
-	}
 
-	return  m_keyStateMap[_keyCode]->isReleased;
+	const KeyState* key = FindKeyState(_keyCode);
+	if (key == nullptr)
+		return false;
+
+	return key->isReleased;
 }
 
 bool Input::IsFree(int _keyCode, void* _userPtr)
 {
-	bool IsUser = false;
-	for (void* UserPtr : m_userList)
-	{
-		if (UserPtr == _userPtr)
-		{
-			IsUser = true;
-			break;
-		}
-	}
-
-	if (IsUser == false)
-	{
+	if (!IsRegisteredUser(_userPtr))
 		return false;
-	}
 
-	return  m_keyStateMap[_keyCode]->isFree;
+	const KeyState* key = FindKeyState(_keyCode);
+	if (key == nullptr)
+		return false;
+
+	return key->isFree;
 }
 
 void Input::AddUser(void* _userPtr)
 {
+	if (IsRegisteredUser(_userPtr))
+		return;
+
 	m_userList.push_back(_userPtr);
 }

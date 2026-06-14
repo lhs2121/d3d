@@ -39,11 +39,11 @@ set "ROOT_DIR=%ROOT%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference='Stop';" ^
     "$root=$env:ROOT_DIR;" ^
-    "$outputs=@('bin\x64\Debug\game.exe','bin\x64\Debug\commonlib.dll','bin\x64\Debug\inputlib.dll','bin\x64\Debug\collib.dll','bin\x64\Debug\windowlib.dll','bin\x64\Debug\rendererlib.dll') | ForEach-Object { Join-Path $root $_ };" ^
+    "$outputs=@('bin\x64\Debug\game.exe','bin\x64\Debug\commonlib.dll','bin\x64\Debug\inputlib.dll','bin\x64\Debug\collib.dll','bin\x64\Debug\windowlib.dll','bin\x64\Debug\rendererlib.dll','bin\x64\Debug\networklib.dll') | ForEach-Object { Join-Path $root $_ };" ^
     "foreach($output in $outputs){ if(!(Test-Path -LiteralPath $output)){ exit 1 } }" ^
     "$oldestOutput=($outputs | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } | Sort-Object | Select-Object -First 1);" ^
-    "$roots=@('commonlib','inputlib','collib','windowlib','rendererlib','game','build') | ForEach-Object { Join-Path $root $_ };" ^
-    "$extensions=@('.cpp','.c','.h','.hpp','.hlsl','.vcxproj','.filters','.sln','.props');" ^
+    "$roots=@('commonlib','inputlib','collib','windowlib','rendererlib','networklib','game','build') | ForEach-Object { Join-Path $root $_ };" ^
+    "$extensions=@('.cpp','.c','.h','.hpp','.inl','.hlsl','.vcxproj','.filters','.sln','.props');" ^
     "foreach($sourceRoot in $roots){ if(!(Test-Path -LiteralPath $sourceRoot)){ exit 1 } $newer=Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() -and $_.LastWriteTimeUtc -gt $oldestOutput } | Select-Object -First 1; if($newer){ exit 1 } }" ^
     "exit 0"
 if errorlevel 1 (
@@ -93,6 +93,9 @@ call :buildProject "windowlib" "%ROOT%windowlib\windowlib.sln"
 if errorlevel 1 exit /b 1
 
 call :buildProject "rendererlib" "%ROOT%rendererlib\rendererlib.sln"
+if errorlevel 1 exit /b 1
+
+call :buildProject "networklib" "%ROOT%networklib\networklib.sln"
 if errorlevel 1 exit /b 1
 
 call :buildProject "game" "%ROOT%game\game.sln"

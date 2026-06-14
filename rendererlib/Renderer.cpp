@@ -25,6 +25,7 @@ namespace
 	constexpr int FontAtlasPixelHeight = 32;
 	constexpr const WCHAR* FontFileName = L"GalmuriMono9.ttf";
 	constexpr const WCHAR* FontFamilyName = L"GalmuriMono9 Regular";
+	constexpr size_t ShaderEntryNameCapacity = 256;
 
 	ID3D11Buffer* CreateDynamicBuffer(ID3D11Device* pDevice, UINT byteWidth, UINT bindFlags)
 	{
@@ -59,6 +60,72 @@ namespace
 		PathCanonicalizeW(resolvedPath, moduleDir);
 		PathAppendW(resolvedPath, fileName);
 		return PathFileExistsW(resolvedPath) != FALSE;
+	}
+
+	bool GetShaderBaseName(const WCHAR* shaderFile, char* baseName, size_t baseNameCapacity)
+	{
+		if (shaderFile == nullptr || baseName == nullptr || baseNameCapacity == 0)
+			return false;
+
+		baseName[0] = '\0';
+		const WCHAR* fileName = PathFindFileNameW(shaderFile);
+		WideCharToMultiByte(CP_UTF8, 0, fileName, -1, baseName, static_cast<int>(baseNameCapacity), nullptr, nullptr);
+		baseName[baseNameCapacity - 1] = '\0';
+
+		char* extension = std::strchr(baseName, '.');
+		if (extension == nullptr || extension == baseName)
+			return false;
+
+		*extension = '\0';
+		return true;
+	}
+
+	void BuildShaderEntryName(char* entryName, size_t entryNameCapacity, const char* baseName, const char* suffix)
+	{
+		if (entryName == nullptr || entryNameCapacity == 0)
+			return;
+
+		entryName[0] = '\0';
+		strcat_s(entryName, entryNameCapacity, baseName);
+		strcat_s(entryName, entryNameCapacity, suffix);
+	}
+
+	ID3DBlob* CompileShaderEntry(const WCHAR* shaderPath, const char* entryName, const char* target, int flags)
+	{
+		ID3DBlob* shaderBlob = nullptr;
+		ID3DBlob* errorBlob = nullptr;
+		const HRESULT hr = D3DCompileFromFile(
+			shaderPath,
+			nullptr,
+			D3D_COMPILE_STANDARD_FILE_INCLUDE,
+			entryName,
+			target,
+			flags,
+			0,
+			&shaderBlob,
+			&errorBlob);
+
+		if (FAILED(hr))
+		{
+			if (errorBlob != nullptr)
+			{
+				OutputDebugStringA(static_cast<const char*>(errorBlob->GetBufferPointer()));
+				errorBlob->Release();
+			}
+			else
+			{
+				OutputDebugStringA("Shader compile failed, but no error blob was returned: ");
+				OutputDebugStringA(entryName);
+				OutputDebugStringA("\n");
+				OutputDebugStringW(shaderPath);
+				OutputDebugStringW(L"\n");
+			}
+
+			__debugbreak();
+			return nullptr;
+		}
+
+		return shaderBlob;
 	}
 }
 
@@ -191,6 +258,10 @@ void Renderer::Initialize(UINT winWidth, UINT winHeight, HWND& hwnd)
 	m_viewHalfWidth = m_viewHalfHeight * ((float)winWidth / (float)winHeight);
 
 	InitializePipeline();
+	m_gridInstances.reserve(4096);
+	m_spriteBatchInstances.reserve(1024);
+	m_fontSpriteBatchInstances.reserve(1024);
+	m_glyphBatchInstances.reserve(256);
 
 	m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	m_pDeviceContext->IASetInputLayout(m_pipeline.pInputLayout);
@@ -211,6 +282,7 @@ void Renderer::Resize(UINT winWidth, UINT winHeight)
 		return;
 
 	FlushSpriteBatch();
+	FlushFontSpriteBatch();
 	FlushGlyphBatch();
 
 	ID3D11RenderTargetView* nullRenderTargets[] = { nullptr };
@@ -290,6 +362,9 @@ void Renderer::Resize(UINT winWidth, UINT winHeight)
 void Renderer::BeginFrame()
 {
 	m_currentFrameStats = RenderFrameStats();
+	m_currentFrameStats.backBufferWidth = m_windowWidth;
+	m_currentFrameStats.backBufferHeight = m_windowHeight;
+	m_currentFrameStats.fontGlyphsCached = static_cast<unsigned int>(m_fontGlyphCount);
 	m_pDeviceContext->ClearRenderTargetView(m_pRenderTargetView, m_clearColor);
 	m_pDeviceContext->ClearDepthStencilView(m_pDepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
 	m_pDeviceContext->OMSetRenderTargets(1, &m_pRenderTargetView, m_pDepthStencilView);
@@ -302,6 +377,7 @@ void Renderer::BeginFrame()
 void Renderer::EndFrame()
 {
 	FlushSpriteBatch();
+	FlushFontSpriteBatch();
 	FlushGlyphBatch();
 	m_lastFrameStats = m_currentFrameStats;
 	m_pSwapChain->Present(0, 0);
@@ -310,6 +386,7 @@ void Renderer::EndFrame()
 void Renderer::SetViewportRect(float left, float top, float width, float height)
 {
 	FlushSpriteBatch();
+	FlushFontSpriteBatch();
 	FlushGlyphBatch();
 
 	const float viewWidth = m_viewHalfWidth * 2.0f;
@@ -351,11 +428,13 @@ void Renderer::SetViewportRect(float left, float top, float width, float height)
 	scissorRect.right = pixelRight;
 	scissorRect.bottom = pixelBottom;
 	m_pDeviceContext->RSSetScissorRects(1, &scissorRect);
+	++m_currentFrameStats.viewportChanges;
 }
 
 void Renderer::ResetViewportRect()
 {
 	FlushSpriteBatch();
+	FlushFontSpriteBatch();
 	FlushGlyphBatch();
 
 	D3D11_VIEWPORT viewportDesc = {};
@@ -373,6 +452,7 @@ void Renderer::ResetViewportRect()
 	scissorRect.right = static_cast<LONG>(m_windowWidth);
 	scissorRect.bottom = static_cast<LONG>(m_windowHeight);
 	m_pDeviceContext->RSSetScissorRects(1, &scissorRect);
+	++m_currentFrameStats.viewportChanges;
 }
 
 void Renderer::InitializePipeline()
@@ -539,6 +619,8 @@ void Renderer::ReleaseTextures()
 
 	m_textureMap.clear();
 	m_pipeline.pTexture = nullptr;
+	m_lastTextureFile = nullptr;
+	m_lastTextureView = nullptr;
 }
 
 void Renderer::ReleaseFontAtlas()
@@ -776,6 +858,9 @@ void Renderer::UploadFontAtlas()
 		m_fontAtlasPixels.data(),
 		static_cast<UINT>(m_fontAtlasWidth * sizeof(unsigned int)),
 		0);
+	const unsigned int uploadBytes = static_cast<unsigned int>(m_fontAtlasPixels.size() * sizeof(unsigned int));
+	++m_currentFrameStats.fontAtlasUploads;
+	m_currentFrameStats.fontAtlasUploadBytes += uploadBytes;
 	m_fontAtlasDirty = false;
 }
 
@@ -950,16 +1035,8 @@ void Renderer::RebuildGridChunk(const BlockGridDesc& desc, GridChunkCache& chunk
 	chunk.valid = true;
 }
 
-void Renderer::QueueSprite(ID3D11ShaderResourceView* texture, const SpriteDesc& desc)
+SpriteBatchInstance Renderer::BuildSpriteBatchInstance(const SpriteDesc& desc) const
 {
-	if (texture == nullptr)
-		return;
-
-	if (m_spriteBatchTexture != nullptr && m_spriteBatchTexture != texture)
-		FlushSpriteBatch();
-
-	m_spriteBatchTexture = texture;
-
 	int atlasColumns = desc.atlasColumns > 0 ? desc.atlasColumns : 1;
 	int atlasRows = desc.atlasRows > 0 ? desc.atlasRows : 1;
 	int tileCount = atlasColumns * atlasRows;
@@ -986,7 +1063,23 @@ void Renderer::QueueSprite(ID3D11ShaderResourceView* texture, const SpriteDesc& 
 	instance.rotationDepth = { std::sin(desc.rotationRadians), std::cos(desc.rotationRadians), desc.depth, 0.0f };
 	instance.uv = { u0, tileY * uvHeight, widthScale, uvHeight };
 	instance.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
-	m_spriteBatchInstances.push_back(instance);
+	return instance;
+}
+
+void Renderer::QueueSprite(ID3D11ShaderResourceView* texture, const SpriteDesc& desc)
+{
+	if (texture == nullptr)
+		return;
+
+	if (m_spriteBatchTexture != nullptr && m_spriteBatchTexture != texture)
+		FlushSpriteBatch();
+
+	m_spriteBatchTexture = texture;
+	m_spriteBatchInstances.push_back(BuildSpriteBatchInstance(desc));
+	if (texture == m_pipeline.pWhiteTexture)
+		++m_currentFrameStats.whiteQuads;
+	else
+		++m_currentFrameStats.texturedQuads;
 }
 
 void Renderer::FlushSpriteBatch()
@@ -1004,6 +1097,7 @@ void Renderer::FlushSpriteBatch()
 
 	const size_t instanceCount = m_spriteBatchInstances.size();
 	EnsureSpriteBatchCapacity(instanceCount);
+	const unsigned int uploadBytes = static_cast<unsigned int>(instanceCount * sizeof(SpriteBatchInstance));
 
 	D3D11_MAPPED_SUBRESOURCE instanceResource;
 	if (S_OK != m_pDeviceContext->Map(m_pipeline.pSpriteBatchInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
@@ -1036,8 +1130,69 @@ void Renderer::FlushSpriteBatch()
 	++m_currentFrameStats.drawCalls;
 	++m_currentFrameStats.spriteDrawCalls;
 	m_currentFrameStats.spriteQuads += static_cast<unsigned int>(instanceCount);
+	++m_currentFrameStats.spriteBatches;
+	m_currentFrameStats.maxSpriteBatchQuads = (std::max)(m_currentFrameStats.maxSpriteBatchQuads, static_cast<unsigned int>(instanceCount));
+	++m_currentFrameStats.dynamicBufferUploads;
+	m_currentFrameStats.dynamicBufferUploadBytes += uploadBytes;
+	m_currentFrameStats.spriteUploadBytes += uploadBytes;
 	m_spriteBatchInstances.clear();
 	m_spriteBatchTexture = nullptr;
+	m_spritePipelineBound = false;
+}
+
+void Renderer::FlushFontSpriteBatch()
+{
+	if (m_fontSpriteBatchInstances.empty())
+		return;
+
+	if (m_pipeline.pSpriteBatchVertexShader == nullptr || m_pipeline.pSpriteBatchPixelShader == nullptr ||
+		m_pipeline.pSpriteBatchInputLayout == nullptr || m_fontAtlasView == nullptr)
+	{
+		m_fontSpriteBatchInstances.clear();
+		return;
+	}
+
+	const size_t instanceCount = m_fontSpriteBatchInstances.size();
+	EnsureSpriteBatchCapacity(instanceCount);
+	const unsigned int uploadBytes = static_cast<unsigned int>(instanceCount * sizeof(SpriteBatchInstance));
+
+	D3D11_MAPPED_SUBRESOURCE instanceResource;
+	if (S_OK != m_pDeviceContext->Map(m_pipeline.pSpriteBatchInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
+		__debugbreak();
+	memcpy_s(instanceResource.pData, m_spriteBatchQuadCapacity * sizeof(SpriteBatchInstance),
+		m_fontSpriteBatchInstances.data(), m_fontSpriteBatchInstances.size() * sizeof(SpriteBatchInstance));
+	m_pDeviceContext->Unmap(m_pipeline.pSpriteBatchInstanceBuffer, 0);
+
+	ID3D11Buffer* vertexBuffers[] = { m_pipeline.pQuadVertexBuffer, m_pipeline.pSpriteBatchInstanceBuffer };
+	UINT strides[] = { sizeof(SimpleVertex), sizeof(SpriteBatchInstance) };
+	UINT offsets[] = { 0, 0 };
+
+	m_spritePipelineBound = false;
+	m_pDeviceContext->IASetInputLayout(m_pipeline.pSpriteBatchInputLayout);
+	m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	m_pDeviceContext->VSSetShader(m_pipeline.pSpriteBatchVertexShader, nullptr, 0);
+	m_pDeviceContext->PSSetShader(m_pipeline.pSpriteBatchPixelShader, nullptr, 0);
+	m_pDeviceContext->PSSetSamplers(0, 1, &m_pipeline.pSampler);
+	m_pDeviceContext->RSSetState(m_pipeline.pRasterizer);
+	m_pDeviceContext->OMSetBlendState(m_pipeline.pBlendState, nullptr, 0xFFFFFFFF);
+	m_pDeviceContext->OMSetDepthStencilState(m_pipeline.pDepthStencilState, 0);
+	BindTexture(m_fontAtlasView);
+	m_pDeviceContext->IASetVertexBuffers(0, 2, vertexBuffers, strides, offsets);
+	m_pDeviceContext->IASetIndexBuffer(m_pipeline.pQuadIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+
+	SpriteTransformData transformData{ XMMatrixIdentity(), m_matView, m_matProjection };
+	d3d::BindVertexConstantBuffer(m_pDeviceContext, m_pipeline.pTransformConstantBuffer, &transformData, sizeof(SpriteTransformData), 0);
+	m_pDeviceContext->DrawIndexedInstanced(6, static_cast<UINT>(instanceCount), 0, 0, 0);
+
+	++m_currentFrameStats.drawCalls;
+	++m_currentFrameStats.fontDrawCalls;
+	m_currentFrameStats.fontQuads += static_cast<unsigned int>(instanceCount);
+	++m_currentFrameStats.fontBatches;
+	m_currentFrameStats.maxFontBatchQuads = (std::max)(m_currentFrameStats.maxFontBatchQuads, static_cast<unsigned int>(instanceCount));
+	++m_currentFrameStats.dynamicBufferUploads;
+	m_currentFrameStats.dynamicBufferUploadBytes += uploadBytes;
+	m_currentFrameStats.fontUploadBytes += uploadBytes;
+	m_fontSpriteBatchInstances.clear();
 	m_spritePipelineBound = false;
 }
 
@@ -1055,6 +1210,7 @@ void Renderer::FlushGlyphBatch()
 
 	const size_t instanceCount = m_glyphBatchInstances.size();
 	EnsureGlyphBatchCapacity(instanceCount);
+	const unsigned int uploadBytes = static_cast<unsigned int>(instanceCount * sizeof(GlyphBatchInstance));
 
 	D3D11_MAPPED_SUBRESOURCE instanceResource;
 	if (S_OK != m_pDeviceContext->Map(m_pipeline.pGlyphBatchInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
@@ -1083,8 +1239,13 @@ void Renderer::FlushGlyphBatch()
 	m_pDeviceContext->DrawIndexedInstanced(6, static_cast<UINT>(instanceCount), 0, 0, 0);
 
 	++m_currentFrameStats.drawCalls;
-	++m_currentFrameStats.spriteDrawCalls;
-	m_currentFrameStats.spriteQuads += static_cast<unsigned int>(instanceCount);
+	++m_currentFrameStats.glyphDrawCalls;
+	m_currentFrameStats.glyphQuads += static_cast<unsigned int>(instanceCount);
+	++m_currentFrameStats.glyphBatches;
+	m_currentFrameStats.maxGlyphBatchQuads = (std::max)(m_currentFrameStats.maxGlyphBatchQuads, static_cast<unsigned int>(instanceCount));
+	++m_currentFrameStats.dynamicBufferUploads;
+	m_currentFrameStats.dynamicBufferUploadBytes += uploadBytes;
+	m_currentFrameStats.glyphUploadBytes += uploadBytes;
 	m_glyphBatchInstances.clear();
 	m_spritePipelineBound = false;
 }
@@ -1099,29 +1260,23 @@ ID3D11ShaderResourceView* Renderer::GetTexture(const WCHAR* textureFile)
 	if (textureFile == nullptr)
 		return nullptr;
 
+	if (m_lastTextureFile == textureFile && m_lastTextureView != nullptr)
+		return m_lastTextureView;
+
 	std::wstring key(textureFile);
 	auto iter = m_textureMap.find(key);
 	if (iter != m_textureMap.end())
-		return iter->second;
-
-	WCHAR wszFullPath[MAX_PATH] = {};
-	GetCurrentDirectoryW(MAX_PATH, wszFullPath);
-	PathAppendW(wszFullPath, textureFile);
-
-	if (!PathFileExistsW(wszFullPath))
 	{
-		WCHAR wszModuleDir[MAX_PATH] = {};
-		GetModuleFileNameW(nullptr, wszModuleDir, MAX_PATH);
-		PathRemoveFileSpecW(wszModuleDir);
-		PathAppendW(wszModuleDir, L"..\\..\\..");
-		PathCanonicalizeW(wszFullPath, wszModuleDir);
-		PathAppendW(wszFullPath, textureFile);
+		m_lastTextureFile = textureFile;
+		m_lastTextureView = iter->second;
+		return iter->second;
 	}
 
-	if (!PathFileExistsW(wszFullPath))
+	WCHAR wszFullPath[MAX_PATH] = {};
+	if (!ResolveWorkspaceFile(textureFile, wszFullPath, MAX_PATH))
 	{
 		OutputDebugStringW(L"Texture file was not found: ");
-		OutputDebugStringW(wszFullPath);
+		OutputDebugStringW(textureFile);
 		OutputDebugStringW(L"\n");
 		__debugbreak();
 		return nullptr;
@@ -1167,52 +1322,32 @@ ID3D11ShaderResourceView* Renderer::GetTexture(const WCHAR* textureFile)
 	}
 
 	m_textureMap.insert({ key, pSRV });
+	m_lastTextureFile = textureFile;
+	m_lastTextureView = pSRV;
 	return pSRV;
 }
 
 void Renderer::LoadPipelineShader(const WCHAR* shaderFile)
 {
-	WCHAR* wszCurrentDir = new WCHAR[MAX_PATH];
-	GetCurrentDirectoryW(MAX_PATH, wszCurrentDir);
-	PathAppendW(wszCurrentDir, shaderFile);
-	if (!PathFileExistsW(wszCurrentDir))
-	{
-		WCHAR wszModuleDir[MAX_PATH] = {};
-		GetModuleFileNameW(nullptr, wszModuleDir, MAX_PATH);
-		PathRemoveFileSpecW(wszModuleDir);
-		PathAppendW(wszModuleDir, L"..\\..\\..");
-		PathCanonicalizeW(wszCurrentDir, wszModuleDir);
-		PathAppendW(wszCurrentDir, shaderFile);
-	}
-	if (!PathFileExistsW(wszCurrentDir))
+	WCHAR shaderPath[MAX_PATH] = {};
+	if (!ResolveWorkspaceFile(shaderFile, shaderPath, MAX_PATH))
 	{
 		OutputDebugStringW(L"Shader file was not found: ");
-		OutputDebugStringW(wszCurrentDir);
+		OutputDebugStringW(shaderFile);
 		OutputDebugStringW(L"\n");
 		__debugbreak();
+		return;
 	}
 
-	WCHAR* wszFileName = PathFindFileNameW(shaderFile);
-	char* szFileName = new char[256];
-	WideCharToMultiByte(CP_UTF8, 0, wszFileName, -1, szFileName, 256, NULL, NULL);
-
-	char* szMainName = new char[256];
-	int len = 0;
-	char* pExtention = szFileName;
-	while (*pExtention != '.')
+	char shaderBaseName[ShaderEntryNameCapacity] = {};
+	if (!GetShaderBaseName(shaderFile, shaderBaseName, ShaderEntryNameCapacity))
 	{
-		len++;
-		pExtention++;
+		OutputDebugStringW(L"Shader file name was invalid: ");
+		OutputDebugStringW(shaderFile);
+		OutputDebugStringW(L"\n");
+		__debugbreak();
+		return;
 	}
-	memcpy_s(szMainName, len, szFileName, len);
-	szMainName[len] = '_';
-	szMainName[len + 1] = 'V';
-	szMainName[len + 2] = 'S';
-	szMainName[len + 3] = '\0';
-
-	ID3DBlob* pVertexShaderBlob = nullptr;
-	ID3DBlob* pPixelShaderBlob = nullptr;
-	ID3DBlob* pErrorBlob = nullptr;
 
 	int flag = 0;
 #ifdef _DEBUG
@@ -1220,195 +1355,47 @@ void Renderer::LoadPipelineShader(const WCHAR* shaderFile)
 #endif
 	flag |= D3DCOMPILE_PACK_MATRIX_ROW_MAJOR;
 
-	HRESULT hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szMainName, "vs_5_0", flag, 0, &pVertexShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
+	auto compileVertexShader = [&](const char* suffix, ID3D11VertexShader** shader) -> ID3DBlob*
 	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Vertex shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreateVertexShader(pVertexShaderBlob->GetBufferPointer(), pVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pVertexShader))
-		__debugbreak();
+		char entryName[ShaderEntryNameCapacity] = {};
+		BuildShaderEntryName(entryName, ShaderEntryNameCapacity, shaderBaseName, suffix);
 
-	char* szGridMainName = new char[256];
-	memcpy_s(szGridMainName, 256, szFileName, len);
-	memcpy_s(szGridMainName + len, 256 - len, "_GridVS", sizeof("_GridVS"));
+		ID3DBlob* shaderBlob = CompileShaderEntry(shaderPath, entryName, "vs_5_0", flag);
+		if (shaderBlob == nullptr)
+			return nullptr;
 
-	ID3DBlob* pGridVertexShaderBlob = nullptr;
-	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szGridMainName, "vs_5_0", flag, 0, &pGridVertexShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
+		if (S_OK != m_pDevice->CreateVertexShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, shader))
+		{
+			shaderBlob->Release();
+			__debugbreak();
+			return nullptr;
+		}
+
+		return shaderBlob;
+	};
+
+	auto compilePixelShader = [&](const char* suffix, ID3D11PixelShader** shader)
 	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Grid vertex shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreateVertexShader(pGridVertexShaderBlob->GetBufferPointer(), pGridVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pGridVertexShader))
-		__debugbreak();
+		char entryName[ShaderEntryNameCapacity] = {};
+		BuildShaderEntryName(entryName, ShaderEntryNameCapacity, shaderBaseName, suffix);
 
-	char* szBatchVertexMainName = new char[256];
-	memcpy_s(szBatchVertexMainName, 256, szFileName, len);
-	memcpy_s(szBatchVertexMainName + len, 256 - len, "_BatchVS", sizeof("_BatchVS"));
+		ID3DBlob* shaderBlob = CompileShaderEntry(shaderPath, entryName, "ps_5_0", flag);
+		if (shaderBlob == nullptr)
+			return;
 
-	ID3DBlob* pSpriteBatchVertexShaderBlob = nullptr;
-	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szBatchVertexMainName, "vs_5_0", flag, 0, &pSpriteBatchVertexShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
-	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Sprite batch vertex shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreateVertexShader(pSpriteBatchVertexShaderBlob->GetBufferPointer(), pSpriteBatchVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pSpriteBatchVertexShader))
-		__debugbreak();
+		if (S_OK != m_pDevice->CreatePixelShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, shader))
+			__debugbreak();
 
-	char* szBatchPixelMainName = new char[256];
-	memcpy_s(szBatchPixelMainName, 256, szFileName, len);
-	memcpy_s(szBatchPixelMainName + len, 256 - len, "_BatchPS", sizeof("_BatchPS"));
+		shaderBlob->Release();
+	};
 
-	ID3DBlob* pSpriteBatchPixelShaderBlob = nullptr;
-	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szBatchPixelMainName, "ps_5_0", flag, 0, &pSpriteBatchPixelShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
-	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Sprite batch pixel shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreatePixelShader(pSpriteBatchPixelShaderBlob->GetBufferPointer(), pSpriteBatchPixelShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pSpriteBatchPixelShader))
-		__debugbreak();
-
-	char* szGlyphVertexMainName = new char[256];
-	memcpy_s(szGlyphVertexMainName, 256, szFileName, len);
-	memcpy_s(szGlyphVertexMainName + len, 256 - len, "_GlyphVS", sizeof("_GlyphVS"));
-
-	ID3DBlob* pGlyphBatchVertexShaderBlob = nullptr;
-	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szGlyphVertexMainName, "vs_5_0", flag, 0, &pGlyphBatchVertexShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
-	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Glyph batch vertex shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreateVertexShader(pGlyphBatchVertexShaderBlob->GetBufferPointer(), pGlyphBatchVertexShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pGlyphBatchVertexShader))
-		__debugbreak();
-
-	char* szGlyphPixelMainName = new char[256];
-	memcpy_s(szGlyphPixelMainName, 256, szFileName, len);
-	memcpy_s(szGlyphPixelMainName + len, 256 - len, "_GlyphPS", sizeof("_GlyphPS"));
-
-	ID3DBlob* pGlyphBatchPixelShaderBlob = nullptr;
-	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szGlyphPixelMainName, "ps_5_0", flag, 0, &pGlyphBatchPixelShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
-	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Glyph batch pixel shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreatePixelShader(pGlyphBatchPixelShaderBlob->GetBufferPointer(), pGlyphBatchPixelShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pGlyphBatchPixelShader))
-		__debugbreak();
-
-	szMainName[len + 1] = 'P';
-	hr = D3DCompileFromFile(wszCurrentDir, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, szMainName, "ps_5_0", flag, 0, &pPixelShaderBlob, &pErrorBlob);
-	if (FAILED(hr))
-	{
-		if (pErrorBlob)
-		{
-			char* error = static_cast<char*>(pErrorBlob->GetBufferPointer());
-			OutputDebugStringA(error);
-			pErrorBlob->Release();
-			pErrorBlob = nullptr;
-		}
-		else
-		{
-			OutputDebugStringW(L"Pixel shader compile failed, but no error blob was returned: ");
-			OutputDebugStringW(wszCurrentDir);
-			OutputDebugStringW(L"\n");
-		}
-		__debugbreak();
-	}
-	if (S_OK != m_pDevice->CreatePixelShader(pPixelShaderBlob->GetBufferPointer(), pPixelShaderBlob->GetBufferSize(), nullptr, &m_pipeline.pPixelShader))
-		__debugbreak();
-
-	m_pVertexShaderBlob = pVertexShaderBlob;
-	m_pGridVertexShaderBlob = pGridVertexShaderBlob;
-	m_pSpriteBatchVertexShaderBlob = pSpriteBatchVertexShaderBlob;
-	m_pGlyphBatchVertexShaderBlob = pGlyphBatchVertexShaderBlob;
-
-	pGlyphBatchPixelShaderBlob->Release();
-	pSpriteBatchPixelShaderBlob->Release();
-	pPixelShaderBlob->Release();
-	delete[] szGlyphPixelMainName;
-	delete[] szGlyphVertexMainName;
-	delete[] szBatchPixelMainName;
-	delete[] szBatchVertexMainName;
-	delete[] szGridMainName;
-	delete[] szMainName;
-	delete[] szFileName;
-	delete[] wszCurrentDir;
+	m_pVertexShaderBlob = compileVertexShader("_VS", &m_pipeline.pVertexShader);
+	m_pGridVertexShaderBlob = compileVertexShader("_GridVS", &m_pipeline.pGridVertexShader);
+	m_pSpriteBatchVertexShaderBlob = compileVertexShader("_BatchVS", &m_pipeline.pSpriteBatchVertexShader);
+	compilePixelShader("_BatchPS", &m_pipeline.pSpriteBatchPixelShader);
+	m_pGlyphBatchVertexShaderBlob = compileVertexShader("_GlyphVS", &m_pipeline.pGlyphBatchVertexShader);
+	compilePixelShader("_GlyphPS", &m_pipeline.pGlyphBatchPixelShader);
+	compilePixelShader("_PS", &m_pipeline.pPixelShader);
 }
 
 void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
@@ -1438,7 +1425,12 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 	if (startX > endX || startY > endY)
 		return;
 
+	m_currentFrameStats.gridVisibleColumns = static_cast<unsigned int>(endX - startX + 1);
+	m_currentFrameStats.gridVisibleRows = static_cast<unsigned int>(endY - startY + 1);
+	m_currentFrameStats.gridVisibleTiles = m_currentFrameStats.gridVisibleColumns * m_currentFrameStats.gridVisibleRows;
+
 	FlushSpriteBatch();
+	FlushFontSpriteBatch();
 
 	m_gridInstances.clear();
 	XMMATRIX gridWorld = XMMatrixIdentity();
@@ -1465,6 +1457,7 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 
 		if (cacheMismatch)
 		{
+			++m_currentFrameStats.gridCacheInvalidations;
 			m_gridCache.tiles = desc.tiles;
 			m_gridCache.width = desc.width;
 			m_gridCache.height = desc.height;
@@ -1507,6 +1500,7 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 			return;
 
 		EnsureGridBatchCapacity(instanceCount);
+		const unsigned int uploadBytes = static_cast<unsigned int>(instanceCount * sizeof(GridInstance));
 		D3D11_MAPPED_SUBRESOURCE instanceResource;
 		if (S_OK != m_pDeviceContext->Map(m_pipeline.pGridInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
 			__debugbreak();
@@ -1530,6 +1524,9 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 			}
 		}
 		m_pDeviceContext->Unmap(m_pipeline.pGridInstanceBuffer, 0);
+		++m_currentFrameStats.dynamicBufferUploads;
+		m_currentFrameStats.dynamicBufferUploadBytes += uploadBytes;
+		m_currentFrameStats.gridUploadBytes += uploadBytes;
 
 		gridBufferUploaded = true;
 		gridWorld = XMMatrixTranslation(desc.originX, desc.originY, 0.0f);
@@ -1571,6 +1568,7 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 
 		instanceCount = m_gridInstances.size();
 		EnsureGridBatchCapacity(instanceCount);
+		const unsigned int uploadBytes = static_cast<unsigned int>(instanceCount * sizeof(GridInstance));
 
 		D3D11_MAPPED_SUBRESOURCE instanceResource;
 		if (S_OK != m_pDeviceContext->Map(m_pipeline.pGridInstanceBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &instanceResource))
@@ -1578,6 +1576,9 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 		memcpy_s(instanceResource.pData, m_gridQuadCapacity * sizeof(GridInstance),
 			m_gridInstances.data(), m_gridInstances.size() * sizeof(GridInstance));
 		m_pDeviceContext->Unmap(m_pipeline.pGridInstanceBuffer, 0);
+		++m_currentFrameStats.dynamicBufferUploads;
+		m_currentFrameStats.dynamicBufferUploadBytes += uploadBytes;
+		m_currentFrameStats.gridUploadBytes += uploadBytes;
 	}
 
 	ID3D11Buffer* vertexBuffers[] = { m_pipeline.pQuadVertexBuffer, m_pipeline.pGridInstanceBuffer };
@@ -1692,6 +1693,7 @@ void Renderer::DrawText(const TextDesc& desc)
 	if (!EnsureFontAtlas())
 		return;
 
+	++m_currentFrameStats.textDrawCalls;
 	const char* scan = desc.text;
 	while (*scan != '\0')
 	{
@@ -1704,6 +1706,7 @@ void Renderer::DrawText(const TextDesc& desc)
 		if (!EnsureFontGlyph(codepoint))
 			EnsureFontGlyph('?');
 	}
+	m_currentFrameStats.fontGlyphsCached = static_cast<unsigned int>(m_fontGlyphCount);
 	UploadFontAtlas();
 
 	const float scale = desc.pixelSize * 5.0f / (std::max)(1.0f, m_fontAsciiWidth);
@@ -1761,7 +1764,8 @@ void Renderer::DrawText(const TextDesc& desc)
 		glyphDesc.colorB = desc.colorB;
 		glyphDesc.colorA = desc.colorA;
 		glyphDesc.depth = desc.depth;
-		DrawSpriteQuad(glyphDesc, m_fontAtlasView);
+		m_fontSpriteBatchInstances.push_back(BuildSpriteBatchInstance(glyphDesc));
+		++m_currentFrameStats.textGlyphs;
 
 		const float advanceRatio = glyph.advancePixels / (std::max)(1.0f, m_fontAsciiWidth);
 		cursorX += desc.pixelSize * 6.0f * advanceRatio;

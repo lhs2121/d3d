@@ -48,17 +48,23 @@ float collib::Bottom(const AABB& box)
 
 bool collib::Intersects(const AABB& a, const AABB& b)
 {
-	return Left(a) < Right(b) &&
-		Right(a) > Left(b) &&
-		Bottom(a) < Top(b) &&
-		Top(a) > Bottom(b);
+	const float aHalfWidth = a.width * 0.5f;
+	const float aHalfHeight = a.height * 0.5f;
+	const float bHalfWidth = b.width * 0.5f;
+	const float bHalfHeight = b.height * 0.5f;
+	return a.centerX - aHalfWidth < b.centerX + bHalfWidth &&
+		a.centerX + aHalfWidth > b.centerX - bHalfWidth &&
+		a.centerY - aHalfHeight < b.centerY + bHalfHeight &&
+		a.centerY + aHalfHeight > b.centerY - bHalfHeight;
 }
 
 bool collib::ContainsPoint(const AABB& box, float pointX, float pointY)
 {
-	return pointX >= Left(box) &&
-		pointX <= Right(box) &&
-		pointY >= Bottom(box) &&
-		pointY <= Top(box);
+	const float halfWidth = box.width * 0.5f;
+	const float halfHeight = box.height * 0.5f;
+	return pointX >= box.centerX - halfWidth &&
+		pointX <= box.centerX + halfWidth &&
+		pointY >= box.centerY - halfHeight &&
+		pointY <= box.centerY + halfHeight;
 }
 

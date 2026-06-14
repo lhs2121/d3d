@@ -130,8 +130,10 @@ private:
 	void ResetGridCache();
 	void RebuildGridChunk(const BlockGridDesc& desc, GridChunkCache& chunk, int chunkX, int chunkY,
 		int chunkSize, int atlasColumns, int atlasRows, int tileCount, float uvWidth, float uvHeight);
+	SpriteBatchInstance BuildSpriteBatchInstance(const SpriteDesc& desc) const;
 	void QueueSprite(ID3D11ShaderResourceView* texture, const SpriteDesc& desc);
 	void FlushSpriteBatch();
+	void FlushFontSpriteBatch();
 	void FlushGlyphBatch();
 	void DrawSpriteQuad(const SpriteDesc& desc, ID3D11ShaderResourceView* texture);
 
@@ -151,11 +153,14 @@ private:
 	std::vector<GridInstance> m_gridInstances;
 	GridCacheState m_gridCache;
 	std::vector<SpriteBatchInstance> m_spriteBatchInstances;
+	std::vector<SpriteBatchInstance> m_fontSpriteBatchInstances;
 	std::vector<GlyphBatchInstance> m_glyphBatchInstances;
 	std::unordered_map<unsigned int, FontGlyph> m_fontGlyphs;
 	std::vector<unsigned int> m_fontAtlasPixels;
 	RenderFrameStats m_currentFrameStats;
 	RenderFrameStats m_lastFrameStats;
+	const WCHAR* m_lastTextureFile = nullptr;
+	ID3D11ShaderResourceView* m_lastTextureView = nullptr;
 	ID3D11ShaderResourceView* m_boundTexture = nullptr;
 	ID3D11ShaderResourceView* m_spriteBatchTexture = nullptr;
 	ID3D11Texture2D* m_fontAtlasTexture = nullptr;

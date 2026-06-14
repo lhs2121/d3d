@@ -32,6 +32,8 @@ Vec4 Vec4::normalize(Vec4& _other)
 	Vec4 result;
 	result = _other;
 	float length = static_cast<float>(sqrt(_other.x * _other.x + _other.y * _other.y + _other.z * _other.z));
+	if (length <= 0.0f)
+		return result;
 
 	result.x /= length;
 	result.y /= length;
@@ -42,6 +44,9 @@ Vec4 Vec4::normalize(Vec4& _other)
 void Vec4::normalize()
 {
 	float length = static_cast<float>(sqrt(x * x + y * y + z * z));
+	if (length <= 0.0f)
+		return;
+
 	x /= length;
 	y /= length;
 	z /= length;
@@ -110,16 +115,21 @@ Mat4 Mat4::operator*(const Mat4& _other)
 
 void Mat4::operator*=(const Mat4& _other)
 {
+	Mat4 result;
+	result.Zero();
+
 	for (size_t r = 0; r < 4; r++)
 	{
 		for (size_t j = 0; j < 4; j++)
 		{
 			for (size_t i = 0; i < 4; i++)
 			{
-				matrix[r][j] += matrix[r][i] * _other.matrix[i][j];
+				result.matrix[r][j] += matrix[r][i] * _other.matrix[i][j];
 			}
 		}
 	}
+
+	*this = result;
 }
 
 void Mat4::Identity()

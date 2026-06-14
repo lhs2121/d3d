@@ -31,7 +31,9 @@ public:
 	void RegisterKey(int _keyCode);
 
 private:
-	std::unordered_map<int, KeyState*> m_keyStateMap;
+	bool IsRegisteredUser(void* _userPtr) const;
+	KeyState* FindKeyState(int _keyCode);
+
+	std::unordered_map<int, KeyState> m_keyStateMap;
 	std::vector<void*> m_userList;
 };
-

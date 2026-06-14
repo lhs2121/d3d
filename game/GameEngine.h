@@ -3,6 +3,7 @@
 #include <commonlib/Interface.h>
 #include <inputlib/Interface.h>
 #include <collib/Interface.h>
+#include <networklib/Interface.h>
 #include <rendererlib/Interface.h>
 #include <windowlib/Interface.h>
 #include <array>
@@ -134,7 +135,7 @@ private:
 
 	struct NetworkPeerState
 	{
-		sockaddr_in address = {};
+		NetworkAddress address = {};
 		float lastHeardTime = 0.0f;
 		unsigned int token = 0;
 		int playerId = 0;
@@ -208,18 +209,18 @@ private:
 	void UpdateNetwork(float deltaTime);
 	void SendNetworkHello();
 	void SendLocalPlayerState();
-	void SendWelcomePacket(const sockaddr_in& address, int playerId, unsigned int token);
-	void SendTileEditPacket(int tileX, int tileY, unsigned short tileIndex, unsigned char visible, unsigned int sequence, const sockaddr_in* targetAddress);
+	void SendWelcomePacket(const NetworkAddress& address, int playerId, unsigned int token);
+	void SendTileEditPacket(int tileX, int tileY, unsigned short tileIndex, unsigned char visible, unsigned int sequence, const NetworkAddress* targetAddress);
 	void BroadcastTileEdit(int tileX, int tileY, unsigned short tileIndex, unsigned char visible);
 	void PublishLocalTileEdit(int tileX, int tileY);
 	void ApplyNetworkTileEdit(int tileX, int tileY, unsigned short tileIndex, unsigned char visible);
-	void SendBlockBreakPacket(int playerId, int tileX, int tileY, float progress, unsigned char active, const sockaddr_in* targetAddress);
+	void SendBlockBreakPacket(int playerId, int tileX, int tileY, float progress, unsigned char active, const NetworkAddress* targetAddress);
 	void PublishBlockBreakState(int tileX, int tileY, float progress, bool active);
 	void ApplyNetworkBlockBreakState(int playerId, int tileX, int tileY, float progress, bool active);
-	void SendLeafEffectPacket(int playerId, int tileX, int tileY, unsigned int seed, const sockaddr_in* targetAddress);
+	void SendLeafEffectPacket(int playerId, int tileX, int tileY, unsigned int seed, const NetworkAddress* targetAddress);
 	void PublishLeafBreakEffect(int tileX, int tileY, unsigned int seed);
 	void ApplyNetworkLeafBreakEffect(int tileX, int tileY, unsigned int seed);
-	void SendDroppedItemPacket(const DroppedItemState& item, int playerId, const sockaddr_in* targetAddress);
+	void SendDroppedItemPacket(const DroppedItemState& item, int playerId, const NetworkAddress* targetAddress);
 	void PublishDroppedItemState(const DroppedItemState& item);
 	void ApplyNetworkDroppedItemState(unsigned int networkId, int playerId, int pickupPlayerId, float x, float y, float velocityX, float velocityY, float pickupDelay, unsigned short tileIndex, int amount, unsigned char alive);
 	void SendOwnedDroppedItemStates();
@@ -230,10 +231,10 @@ private:
 	int ChooseDroppedItemPickupPlayer(float worldX, float worldY) const;
 	bool CanLocalPlayerPickupItem(const DroppedItemState& item) const;
 	bool TryGetDroppedItemPickupPosition(const DroppedItemState& item, float& targetX, float& targetY) const;
-	bool SendNetworkPacket(const sockaddr_in& address, const void* packet, int packetSize);
-	void BroadcastNetworkPacket(const void* packet, int packetSize, const sockaddr_in* exceptAddress = nullptr);
-	void HandleNetworkPacket(const char* data, int dataSize, const sockaddr_in& from);
-	int FindNetworkPeer(const sockaddr_in& address) const;
+	bool SendNetworkPacket(const NetworkAddress& address, const void* packet, int packetSize);
+	void BroadcastNetworkPacket(const void* packet, int packetSize, const NetworkAddress* exceptAddress = nullptr);
+	void HandleNetworkPacket(const char* data, int dataSize, const NetworkAddress& from);
+	int FindNetworkPeer(const NetworkAddress& address) const;
 	int FindRemotePlayer(int playerId) const;
 	RemotePlayerState* GetOrCreateRemotePlayer(int playerId);
 	const char* GetNetworkModeText() const;
@@ -357,7 +358,7 @@ private:
 	float TileTop(int tileY) const;
 	float TileBottom(int tileY) const;
 
-	static constexpr int InventorySlotCount = 10;
+	static constexpr int InventorySlotCount = 50;
 
 	IRenderer* m_renderer = nullptr;
 	ITimer* m_timer = nullptr;
@@ -389,8 +390,7 @@ private:
 	PlayerState m_player;
 	NetworkConfig m_networkConfig;
 	NetworkConfig::Mode m_networkMode = NetworkConfig::Mode::SinglePlayer;
-	SOCKET m_networkSocket = INVALID_SOCKET;
-	sockaddr_in m_networkServerAddress = {};
+	INetworkTransport* m_networkTransport = nullptr;
 	int m_selectedInventorySlot = 0;
 	int m_inventoryWheelRemainder = 0;
 	int m_craftingWheelRemainder = 0;
@@ -450,7 +450,6 @@ private:
 	unsigned int m_networkItemSequence = 0;
 	unsigned int m_blockGridVersion = 1;
 	unsigned int m_blockChunkVersionCounter = 1;
-	bool m_winsockStarted = false;
 	bool m_networkConnected = false;
 	bool m_networkSeedReady = false;
 	bool m_gameStarted = false;
