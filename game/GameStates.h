@@ -83,6 +83,20 @@ public:
 	bool alive = false;
 };
 
+class ProjectileState
+{
+public:
+	float x = 0.0f;
+	float y = 0.0f;
+	float velocityX = 0.0f;
+	float velocityY = 0.0f;
+	float age = 0.0f;
+	float lifetime = 0.0f;
+	int damage = 0;
+	int item = 0;
+	bool alive = false;
+};
+
 class MinimapRunState
 {
 public:

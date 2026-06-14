@@ -10,6 +10,7 @@ void GameEngine::InitializeWorld()
 	m_monsters.clear();
 	m_droppedItems.clear();
 	m_leafParticles.clear();
+	m_projectiles.clear();
 	m_networkState.remoteBlockBreaks.clear();
 	m_monsterQueryScratch.clear();
 	m_monsterOverlapScratch.clear();
@@ -1324,12 +1325,27 @@ void GameEngine::InitializeWorld()
 
 	m_inventory.Clear();
 	const int teleportPotionSlot = AddInventoryItem(SlotTeleportPotion, 1);
+	AddInventoryItem(SlotHealthPotion, 2);
+	AddInventoryItem(SlotSpeedPotion, 1);
+	AddInventoryItem(SlotJumpPotion, 1);
+	AddInventoryItem(SlotGuardPotion, 1);
+	AddInventoryItem(SlotIronHelmet, 1);
+	AddInventoryItem(SlotIronArmor, 1);
+	AddInventoryItem(SlotSwiftBoots, 1);
+	AddInventoryItem(SlotLuckyCharm, 1);
+	AddInventoryItem(SlotPistol, 1);
+	AddInventoryItem(SlotBullet, 24);
+	AddInventoryItem(SlotBow, 1);
+	AddInventoryItem(SlotArrow, 24);
 	m_inventory.SetSelectedSlot(teleportPotionSlot >= 0 ? teleportPotionSlot : 0);
 	m_playerHealth = GetPlayerMaxHealth();
 	m_playerInvulnerableTimer = 0.0f;
 	m_playerHurtFlashTimer = 0.0f;
 	m_playerKnockbackTimer = 0.0f;
 	m_playerKnockbackCooldownTimer = 0.0f;
+	m_speedPotionTimer = 0.0f;
+	m_jumpPotionTimer = 0.0f;
+	m_guardPotionTimer = 0.0f;
 	m_attackCooldown = 0.0f;
 	m_attackTimer = 0.0f;
 	SetStatusText("텔레포트 물약", 2.0f);

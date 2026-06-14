@@ -45,9 +45,20 @@ void GameEngine::RevealAllMap()
 		std::fill(m_world.revealedTiles.begin(), m_world.revealedTiles.end(), 1);
 
 	m_debugRevealMap = true;
-	m_minimapExpanded = true;
 	m_minimapDirty = true;
 	SetStatusText("지도 공개됨", 1.6f);
+}
+
+void GameEngine::ResetMapReveal()
+{
+	if (m_world.revealedTiles.size() != m_world.blocks.size())
+		m_world.revealedTiles.assign(m_world.blocks.size(), 0);
+	else
+		std::fill(m_world.revealedTiles.begin(), m_world.revealedTiles.end(), 0);
+
+	m_debugRevealMap = false;
+	m_minimapDirty = true;
+	UpdateMapReveal();
 }
 
 void GameEngine::UpdateInventoryInput()
@@ -103,12 +114,33 @@ void GameEngine::UpdateInventoryInput()
 
 void GameEngine::UpdateDebugLogInput()
 {
+	if (!IsKeyDown(KeyDebug))
+		return;
+
+	const bool enableDebug = !m_showRenderStats || m_frameLimitEnabled || !m_debugRevealMap;
+	if (enableDebug)
+	{
+		m_showRenderStats = true;
+		m_frameLimitEnabled = false;
+		RevealAllMap();
+		SetStatusText("디버그 표시 켬", 1.6f);
+		return;
+	}
+
+	m_showRenderStats = false;
+	m_frameLimitEnabled = true;
+	ResetMapReveal();
+	SetStatusText("프레임 제한 켬", 1.6f);
+}
+
+void GameEngine::UpdateMainActionInput()
+{
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
 	if (!GetCursorViewPosition(cursorX, cursorY))
 		return;
 
-	const UiRect panel = GetLogPanelRect();
+	const UiRect panel = GetRightPanelRect(2);
 	const float panelCenterX = panel.left + panel.width * 0.5f;
 	const float panelCenterY = panel.top - panel.height * 0.5f;
 	if (!IsPointInsideRect(cursorX, cursorY, panelCenterX, panelCenterY, panel.width, panel.height))
@@ -119,26 +151,81 @@ void GameEngine::UpdateDebugLogInput()
 	if (!IsKeyDown(VK_LBUTTON))
 		return;
 
-	const float buttonHeight = 20.0f;
-	const float buttonY = panel.top - 53.0f;
-	const float perfX = panel.left + 46.0f;
-	const float capX = panel.left + 122.0f;
-	const float revealX = panel.left + 205.0f;
-	if (IsPointInsideRect(cursorX, cursorY, perfX, buttonY, 68.0f, buttonHeight))
+	const float listLeft = panel.left + panel.width * (38.0f / UiStatusFrameWidth);
+	const float listTop = panel.top - panel.height * (72.0f / UiStatusFrameHeight);
+	const float listWidth = panel.width * (400.0f / UiStatusFrameWidth);
+	const float rowHeight = panel.height * (30.0f / UiStatusFrameHeight);
+	const float rowCenterX = listLeft + listWidth * 0.5f;
+	const auto isActionRowClicked = [&](int rowIndex)
 	{
-		m_showRenderStats = !m_showRenderStats;
-		return;
-	}
-	if (IsPointInsideRect(cursorX, cursorY, capX, buttonY, 68.0f, buttonHeight))
+		const float rowCenterY = listTop - rowHeight * (static_cast<float>(rowIndex) + 0.5f);
+		return IsPointInsideRect(cursorX, cursorY, rowCenterX, rowCenterY, listWidth, rowHeight - 2.0f);
+	};
+	int rowIndex = 0;
+	if (GetInventoryItemCount(SlotHealthPotion) > 0)
 	{
-		ToggleFrameLimiter();
-		return;
+		if (isActionRowClicked(rowIndex))
+		{
+			TryUseHealthPotion(SlotHealthPotion);
+			return;
+		}
+		++rowIndex;
 	}
-	if (IsPointInsideRect(cursorX, cursorY, revealX, buttonY, 78.0f, buttonHeight))
+	if (GetInventoryItemCount(SlotGreaterHealthPotion) > 0)
 	{
-		RevealAllMap();
-		return;
+		if (isActionRowClicked(rowIndex))
+		{
+			TryUseHealthPotion(SlotGreaterHealthPotion);
+			return;
+		}
+		++rowIndex;
 	}
+	if (GetInventoryItemCount(SlotSpeedPotion) > 0)
+	{
+		if (isActionRowClicked(rowIndex))
+		{
+			TryUseBuffPotion(SlotSpeedPotion);
+			return;
+		}
+		++rowIndex;
+	}
+	if (GetInventoryItemCount(SlotJumpPotion) > 0)
+	{
+		if (isActionRowClicked(rowIndex))
+		{
+			TryUseBuffPotion(SlotJumpPotion);
+			return;
+		}
+		++rowIndex;
+	}
+	if (GetInventoryItemCount(SlotGuardPotion) > 0)
+	{
+		if (isActionRowClicked(rowIndex))
+		{
+			TryUseBuffPotion(SlotGuardPotion);
+			return;
+		}
+		++rowIndex;
+	}
+	if (GetInventoryItemCount(SlotTeleportPotion) > 0)
+	{
+		if (isActionRowClicked(rowIndex))
+		{
+			TryUseTeleportPotion();
+			return;
+		}
+		++rowIndex;
+	}
+}
+
+void GameEngine::UpdateConsumableEffects(float deltaTime)
+{
+	if (m_speedPotionTimer > 0.0f)
+		m_speedPotionTimer = (std::max)(0.0f, m_speedPotionTimer - deltaTime);
+	if (m_jumpPotionTimer > 0.0f)
+		m_jumpPotionTimer = (std::max)(0.0f, m_jumpPotionTimer - deltaTime);
+	if (m_guardPotionTimer > 0.0f)
+		m_guardPotionTimer = (std::max)(0.0f, m_guardPotionTimer - deltaTime);
 }
 
 void GameEngine::ClampCraftingScrollOffset()
@@ -148,7 +235,14 @@ void GameEngine::ClampCraftingScrollOffset()
 
 int GameEngine::GetCraftingRecipeCount() const
 {
-	return IsCraftingTableNearby() ? 3 : 1;
+	const bool tableNearby = IsCraftingTableNearby();
+	int count = 0;
+	for (const CraftingRecipeInfo& recipe : CraftingRecipes)
+	{
+		if (!recipe.requiresTable || tableNearby)
+			++count;
+	}
+	return count;
 }
 
 int GameEngine::GetVisibleCraftingRecipeRows() const
@@ -222,14 +316,52 @@ bool GameEngine::CraftRecipe(int recipeIndex)
 	if (recipeIndex < 0 || recipeIndex >= GetCraftingRecipeCount())
 		return false;
 
-	if (recipeIndex == 0)
-		return CraftTable();
-	if (recipeIndex == 1 && IsCraftingTableNearby())
-		return CraftSword();
-	if (recipeIndex == 2 && IsCraftingTableNearby())
-		return CraftAxe();
+	const bool tableNearby = IsCraftingTableNearby();
+	const CraftingRecipeInfo* selectedRecipe = nullptr;
+	int visibleIndex = 0;
+	for (const CraftingRecipeInfo& recipe : CraftingRecipes)
+	{
+		if (recipe.requiresTable && !tableNearby)
+			continue;
+		if (visibleIndex == recipeIndex)
+		{
+			selectedRecipe = &recipe;
+			break;
+		}
+		++visibleIndex;
+	}
 
-	return false;
+	if (selectedRecipe == nullptr)
+		return false;
+
+	for (const RecipeIngredient& ingredient : selectedRecipe->ingredients)
+	{
+		if (ingredient.item == InventoryEmptyItem || ingredient.amount <= 0)
+			continue;
+
+		if (GetInventoryItemCount(ingredient.item) < ingredient.amount)
+		{
+			char statusText[64] = {};
+			std::snprintf(statusText, sizeof(statusText), "재료 부족: %s", GetInventoryItemName(ingredient.item));
+			SetStatusText(statusText, 1.4f);
+			return false;
+		}
+	}
+
+	for (const RecipeIngredient& ingredient : selectedRecipe->ingredients)
+	{
+		if (ingredient.item != InventoryEmptyItem && ingredient.amount > 0)
+			RemoveInventoryItem(ingredient.item, ingredient.amount);
+	}
+
+	const int craftedSlot = AddInventoryItem(selectedRecipe->outputItem, selectedRecipe->outputAmount);
+	if (craftedSlot >= 0)
+		m_inventory.SetSelectedSlot(craftedSlot);
+
+	char statusText[64] = {};
+	std::snprintf(statusText, sizeof(statusText), "%s", selectedRecipe->action);
+	SetStatusText(statusText, 1.6f);
+	return true;
 }
 
 int GameEngine::GetInventorySlotItem(int slot) const
@@ -282,17 +414,8 @@ void GameEngine::ClearInventoryDragState()
 
 bool GameEngine::TryUseTeleportPotion()
 {
-	const int selectedSlot = m_inventory.GetSelectedSlot();
-	if (GetSelectedInventoryItem() != SlotTeleportPotion || m_inventory.GetSlotCount(selectedSlot) <= 0)
+	if (GetInventoryItemCount(SlotTeleportPotion) <= 0)
 		return false;
-	if (!IsKeyHeld(VK_LBUTTON))
-		return false;
-	if (m_uiConsumesLeftMouse)
-		return false;
-
-	m_uiConsumesLeftMouse = true;
-	if (!IsKeyDown(VK_LBUTTON))
-		return true;
 
 	const RemotePlayerState* targetPlayer = nullptr;
 	float bestDistanceSq = 3.4e38f;
@@ -317,7 +440,7 @@ bool GameEngine::TryUseTeleportPotion()
 		return true;
 	}
 
-	m_inventory.ConsumeSelected();
+	RemoveInventoryItem(SlotTeleportPotion, 1);
 	m_player.x = targetPlayer->player.x;
 	m_player.y = targetPlayer->player.y;
 	m_player.velocityX = 0.0f;
@@ -335,6 +458,197 @@ bool GameEngine::TryUseTeleportPotion()
 	std::snprintf(statusText, sizeof(statusText), "%s에게 순간이동", targetName);
 	SetStatusText(statusText, 1.5f);
 	return true;
+}
+
+bool GameEngine::TryUseHealthPotion(int item)
+{
+	const InventoryItemInfo& info = GetInventoryItemInfo(item);
+	if (info.kind != InventoryItemKind::Consumable || info.healAmount <= 0 || GetInventoryItemCount(item) <= 0)
+		return false;
+
+	const int maxHealth = GetPlayerMaxHealth();
+	if (m_playerHealth >= maxHealth)
+	{
+		SetStatusText("체력 충분", 1.0f);
+		return true;
+	}
+
+	RemoveInventoryItem(item, 1);
+	m_playerHealth = (std::min)(maxHealth, m_playerHealth + info.healAmount);
+
+	char statusText[64] = {};
+	std::snprintf(statusText, sizeof(statusText), "%s 사용", info.name);
+	SetStatusText(statusText, 1.2f);
+	return true;
+}
+
+bool GameEngine::TryUseBuffPotion(int item)
+{
+	const InventoryItemInfo& info = GetInventoryItemInfo(item);
+	if (info.kind != InventoryItemKind::Consumable || info.buffDuration <= 0.0f || GetInventoryItemCount(item) <= 0)
+		return false;
+
+	RemoveInventoryItem(item, 1);
+	if (item == SlotSpeedPotion)
+		m_speedPotionTimer = (std::max)(m_speedPotionTimer, info.buffDuration);
+	else if (item == SlotJumpPotion)
+		m_jumpPotionTimer = (std::max)(m_jumpPotionTimer, info.buffDuration);
+	else if (item == SlotGuardPotion)
+		m_guardPotionTimer = (std::max)(m_guardPotionTimer, info.buffDuration);
+	else
+		return false;
+
+	char statusText[64] = {};
+	std::snprintf(statusText, sizeof(statusText), "%s 사용", info.name);
+	SetStatusText(statusText, 1.2f);
+	return true;
+}
+
+bool GameEngine::TryUseRangedWeapon(int weaponItem)
+{
+	const InventoryItemInfo& weapon = GetInventoryItemInfo(weaponItem);
+	if (weapon.kind != InventoryItemKind::Equipment || weapon.requiredItem == InventoryEmptyItem ||
+		GetInventoryItemCount(weaponItem) <= 0 || GetInventoryItemCount(weapon.requiredItem) < weapon.requiredAmount)
+	{
+		m_attackCooldown = 0.18f;
+		SetStatusText("탄약 부족", 1.0f);
+		return false;
+	}
+
+	float cursorViewX = 0.0f;
+	float cursorViewY = 0.0f;
+	float directionX = static_cast<float>(m_player.facing);
+	float directionY = 0.0f;
+	if (GetCursorGameViewPosition(cursorViewX, cursorViewY))
+	{
+		directionX = cursorViewX + m_cameraX - m_player.x;
+		directionY = cursorViewY + m_cameraY - m_player.y;
+		const float length = std::sqrt(directionX * directionX + directionY * directionY);
+		if (length > 0.001f)
+		{
+			directionX /= length;
+			directionY /= length;
+		}
+		else
+		{
+			directionX = static_cast<float>(m_player.facing);
+			directionY = 0.0f;
+		}
+	}
+
+	RemoveInventoryItem(weapon.requiredItem, weapon.requiredAmount);
+	m_attackCooldown = weaponItem == SlotPistol ? 0.22f : 0.36f;
+	m_attackTimer = PlayerAttackDuration;
+	const int accessoryItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Accessory));
+	const int accessoryAttack = accessoryItem != InventoryEmptyItem ? GetEquipmentStatsForSlot(accessoryItem).attackBonus : 0;
+	SpawnProjectile(weaponItem, directionX, directionY, weapon.actionDamage + accessoryAttack);
+
+	SetStatusText(weaponItem == SlotPistol ? "총 발사" : "화살 발사", 0.7f);
+	return true;
+}
+
+void GameEngine::SpawnProjectile(int weaponItem, float directionX, float directionY, int damage)
+{
+	const InventoryItemInfo& weapon = GetInventoryItemInfo(weaponItem);
+	const float length = std::sqrt(directionX * directionX + directionY * directionY);
+	if (length <= 0.001f)
+	{
+		directionX = static_cast<float>(m_player.facing);
+		directionY = 0.0f;
+	}
+	else
+	{
+		directionX /= length;
+		directionY /= length;
+	}
+
+	ProjectileState projectile;
+	projectile.x = m_player.x + directionX * 18.0f;
+	projectile.y = m_player.y + 7.0f + directionY * 12.0f;
+	const float speed = weaponItem == SlotPistol ? m_tileSize * 48.0f : m_tileSize * 28.0f;
+	projectile.velocityX = directionX * speed;
+	projectile.velocityY = directionY * speed;
+	projectile.lifetime = (std::max)(0.16f, (weapon.actionRangeTiles * m_tileSize) / speed);
+	projectile.damage = damage;
+	projectile.item = weaponItem;
+	projectile.alive = true;
+
+	for (ProjectileState& existing : m_projectiles)
+	{
+		if (existing.alive)
+			continue;
+
+		existing = projectile;
+		return;
+	}
+
+	constexpr size_t MaxProjectiles = 96;
+	if (m_projectiles.size() < MaxProjectiles)
+	{
+		m_projectiles.push_back(projectile);
+		return;
+	}
+
+	m_projectiles[0] = projectile;
+}
+
+void GameEngine::UpdateProjectiles(float deltaTime)
+{
+	const float arrowGravity = -m_tileSize * 10.0f;
+	for (ProjectileState& projectile : m_projectiles)
+	{
+		if (!projectile.alive)
+			continue;
+
+		projectile.age += deltaTime;
+		if (projectile.age >= projectile.lifetime)
+		{
+			projectile.alive = false;
+			continue;
+		}
+
+		if (projectile.item == SlotBow)
+			projectile.velocityY += arrowGravity * deltaTime;
+
+		const float speed = std::sqrt(projectile.velocityX * projectile.velocityX + projectile.velocityY * projectile.velocityY);
+		const int steps = (std::max)(1, static_cast<int>(std::ceil((speed * deltaTime) / (m_tileSize * 0.42f))));
+		const float stepDt = deltaTime / static_cast<float>(steps);
+		for (int step = 0; step < steps && projectile.alive; ++step)
+		{
+			projectile.x += projectile.velocityX * stepDt;
+			projectile.y += projectile.velocityY * stepDt;
+
+			const int tileX = WorldToTileX(projectile.x);
+			const int tileY = WorldToTileY(projectile.y);
+			if (IsSolidTile(tileX, tileY))
+			{
+				projectile.alive = false;
+				break;
+			}
+
+			const float projectileSize = projectile.item == SlotPistol ? 5.0f : 8.0f;
+			const collib::AABB projectileBox = collib::MakeAABB(projectile.x, projectile.y, projectileSize, projectileSize);
+			for (MonsterState& monster : m_monsters)
+			{
+				if (!monster.alive || !collib::Intersects(projectileBox, GetMonsterAABB(monster.x, monster.y)))
+					continue;
+
+				monster.health -= projectile.damage;
+				monster.hurtTimer = 0.18f;
+				const float knockDirection = projectile.velocityX >= 0.0f ? 1.0f : -1.0f;
+				monster.velocityY = (std::max)(monster.velocityY, m_tileSize * (projectile.item == SlotPistol ? 7.8f : 6.2f));
+				monster.x += knockDirection * (projectile.item == SlotPistol ? 10.0f : 7.0f);
+				if (monster.health <= 0)
+				{
+					monster.alive = false;
+					SpawnDroppedItem(monster.x, monster.y, BlockOre, 1);
+				}
+				SetStatusText(projectile.item == SlotPistol ? "총알 명중" : "화살 명중", 0.45f);
+				projectile.alive = false;
+				break;
+			}
+		}
+	}
 }
 
 void GameEngine::UpdateCrafting(float deltaTime)
@@ -603,6 +917,9 @@ void GameEngine::UpdatePlayerCombat(float deltaTime)
 		m_playerHurtFlashTimer = 0.0f;
 		m_playerKnockbackTimer = 0.0f;
 		m_playerKnockbackCooldownTimer = 0.0f;
+		m_speedPotionTimer = 0.0f;
+		m_jumpPotionTimer = 0.0f;
+		m_guardPotionTimer = 0.0f;
 		SetStatusText("부활", 1.8f);
 	}
 
@@ -614,6 +931,14 @@ void GameEngine::TryPlayerAttack()
 	if (m_uiConsumesLeftMouse || !IsKeyHeld(VK_LBUTTON))
 		return;
 
+	const int selectedItem = GetSelectedInventoryItem();
+	if (selectedItem == SlotPistol || selectedItem == SlotBow)
+	{
+		if (m_attackCooldown <= 0.0f)
+			TryUseRangedWeapon(selectedItem);
+		return;
+	}
+
 	if (!ShouldLeftClickAttack())
 		return;
 
@@ -622,7 +947,6 @@ void GameEngine::TryPlayerAttack()
 
 	m_attackCooldown = 0.34f;
 	m_attackTimer = PlayerAttackDuration;
-	const int selectedItem = GetSelectedInventoryItem();
 	const bool swordEquipped = selectedItem == SlotSword && m_inventory.GetSlotCount(m_inventory.GetSelectedSlot()) > 0;
 	const bool axeEquipped = selectedItem == SlotAxe && m_inventory.GetSlotCount(m_inventory.GetSelectedSlot()) > 0;
 	const int attackDamage = GetPlayerAttackDamage();
@@ -1132,6 +1456,13 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 	};
 
 	int miningBlockIndex = -1;
+	const int selectedItem = GetSelectedInventoryItem();
+	if (selectedItem == SlotPistol || selectedItem == SlotBow)
+	{
+		stopPublishedBreak();
+		return;
+	}
+
 	if (m_input != nullptr && IsKeyHeld(VK_LBUTTON))
 	{
 		int tileX = 0;
@@ -1859,12 +2190,58 @@ int GameEngine::GetPlayerMaxHealth() const
 	return PlayerBaseMaxHealth;
 }
 
+int GameEngine::GetBestEquipmentItem(int equipmentSlot) const
+{
+	const EquipmentSlot targetSlot = static_cast<EquipmentSlot>(equipmentSlot);
+	int bestItem = InventoryEmptyItem;
+	int bestScore = -1;
+	for (int item = 0; item < InventoryItemCount; ++item)
+	{
+		if (GetInventoryItemCount(item) <= 0)
+			continue;
+
+		const InventoryItemInfo& info = GetInventoryItemInfo(item);
+		if (info.kind != InventoryItemKind::Equipment || info.equipmentSlot != targetSlot)
+			continue;
+
+		const int score =
+			info.attackBonus * 3 +
+			info.defenseBonus * 4 +
+			static_cast<int>(info.moveSpeedBonus * 10.0f) +
+			static_cast<int>(info.jumpSpeedBonus * 4.0f) +
+			static_cast<int>(info.chopSpeedMultiplier * 2.0f);
+		if (score > bestScore)
+		{
+			bestScore = score;
+			bestItem = item;
+		}
+	}
+
+	return bestItem;
+}
+
 int GameEngine::GetPlayerDefense() const
 {
 	int defense = PlayerBaseDefense;
 	const int selectedSlot = m_inventory.GetSelectedSlot();
-	if (IsInventoryWeaponSlot(selectedSlot) && m_inventory.GetSlotCount(selectedSlot) > 0)
-		defense += GetEquipmentStatsForSlot(GetSelectedInventoryItem()).defenseBonus;
+	const int selectedItem = GetSelectedInventoryItem();
+	const EquipmentStats selectedStats = GetEquipmentStatsForSlot(selectedItem);
+	if ((selectedStats.slot == EquipmentSlot::Weapon || selectedStats.slot == EquipmentSlot::Tool) && m_inventory.GetSlotCount(selectedSlot) > 0)
+		defense += selectedStats.defenseBonus;
+	const int armorItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Armor));
+	const int helmetItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Helmet));
+	const int bootsItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Boots));
+	const int accessoryItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Accessory));
+	if (armorItem != InventoryEmptyItem)
+		defense += GetEquipmentStatsForSlot(armorItem).defenseBonus;
+	if (helmetItem != InventoryEmptyItem)
+		defense += GetEquipmentStatsForSlot(helmetItem).defenseBonus;
+	if (bootsItem != InventoryEmptyItem)
+		defense += GetEquipmentStatsForSlot(bootsItem).defenseBonus;
+	if (accessoryItem != InventoryEmptyItem)
+		defense += GetEquipmentStatsForSlot(accessoryItem).defenseBonus;
+	if (m_guardPotionTimer > 0.0f)
+		defense += GetInventoryItemInfo(SlotGuardPotion).defenseBonus;
 
 	return defense;
 }
@@ -1873,20 +2250,37 @@ int GameEngine::GetPlayerAttackDamage() const
 {
 	int attack = PlayerBaseAttack;
 	const int selectedSlot = m_inventory.GetSelectedSlot();
-	if (IsInventoryWeaponSlot(selectedSlot) && m_inventory.GetSlotCount(selectedSlot) > 0)
-		attack += GetEquipmentStatsForSlot(GetSelectedInventoryItem()).attackBonus;
+	const int selectedItem = GetSelectedInventoryItem();
+	const EquipmentStats selectedStats = GetEquipmentStatsForSlot(selectedItem);
+	if ((selectedStats.slot == EquipmentSlot::Weapon || selectedStats.slot == EquipmentSlot::Tool) && m_inventory.GetSlotCount(selectedSlot) > 0)
+		attack += selectedStats.attackBonus;
+	const int accessoryItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Accessory));
+	if (accessoryItem != InventoryEmptyItem)
+		attack += GetEquipmentStatsForSlot(accessoryItem).attackBonus;
 
 	return attack;
 }
 
 float GameEngine::GetPlayerMoveSpeedTiles() const
 {
-	return PlayerMoveSpeedTiles;
+	float speed = PlayerMoveSpeedTiles;
+	const int bootsItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Boots));
+	if (bootsItem != InventoryEmptyItem)
+		speed += GetEquipmentStatsForSlot(bootsItem).moveSpeedBonus;
+	if (m_speedPotionTimer > 0.0f)
+		speed += GetInventoryItemInfo(SlotSpeedPotion).moveSpeedBonus;
+	return speed;
 }
 
 float GameEngine::GetPlayerJumpSpeedTiles() const
 {
-	return PlayerJumpSpeedTiles;
+	float jump = PlayerJumpSpeedTiles;
+	const int bootsItem = GetBestEquipmentItem(static_cast<int>(EquipmentSlot::Boots));
+	if (bootsItem != InventoryEmptyItem)
+		jump += GetEquipmentStatsForSlot(bootsItem).jumpSpeedBonus;
+	if (m_jumpPotionTimer > 0.0f)
+		jump += GetInventoryItemInfo(SlotJumpPotion).jumpSpeedBonus;
+	return jump;
 }
 
 float GameEngine::GetSelectedChopSpeedMultiplier() const

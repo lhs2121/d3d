@@ -19,6 +19,7 @@ namespace
 	constexpr int KeyS = 0x53;
 	constexpr int KeyJump = VK_SPACE;
 	constexpr int KeyMinimap = VK_TAB;
+	constexpr int KeyDebug = VK_F1;
 	constexpr float BlockBreakDuration = 0.85f;
 	constexpr float BlockPlaceRepeatInterval = 0.085f;
 	constexpr int BlockInteractionHalfRangeX = 3;
@@ -45,7 +46,7 @@ namespace
 	constexpr int StartMenuActionInput = 14;
 	constexpr int StartMenuActionStart = 15;
 	constexpr int StartMenuActionNickname = 16;
-	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\block_atlas_extended.png";
+	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\biome_sprite_atlas_concept.png";
 	constexpr const WCHAR* UiPanelDefaultTexture = L"assets\\ui\\panel_default.png";
 	constexpr const WCHAR* UiPanelInventoryTexture = L"assets\\ui\\panel_inventory.png";
 	constexpr const WCHAR* UiPanelLogTexture = L"assets\\ui\\panel_log.png";
@@ -114,13 +115,13 @@ namespace
 			return UiPanelDefaultTexture;
 		if (std::strcmp(title, "inventory") == 0)
 			return UiPanelInventoryTexture;
-		if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0)
+		if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0 || std::strcmp(title, "status-log") == 0)
 			return UiPanelLogTexture;
 		if (std::strcmp(title, "map") == 0)
 			return UiPanelMapTexture;
 		if (std::strcmp(title, "craft") == 0)
 			return UiPanelCraftTexture;
-		if (std::strcmp(title, "status") == 0)
+		if (std::strcmp(title, "status") == 0 || std::strcmp(title, "actions") == 0)
 			return UiPanelStatusTexture;
 		if (std::strcmp(title, "network") == 0)
 			return UiPanelNetworkTexture;
@@ -146,8 +147,10 @@ namespace
 			return ".MAP.";
 		if (std::strcmp(title, "craft") == 0)
 			return ".CRAFT.";
-		if (std::strcmp(title, "status") == 0)
+		if (std::strcmp(title, "status") == 0 || std::strcmp(title, "status-log") == 0)
 			return ".STATUS.";
+		if (std::strcmp(title, "actions") == 0)
+			return ".MAIN ACTION.";
 		if (std::strcmp(title, "network") == 0)
 			return ".NETWORK.";
 
@@ -305,8 +308,22 @@ namespace
 	constexpr int SlotSword = 8;
 	constexpr int SlotAxe = 9;
 	constexpr int SlotTeleportPotion = 10;
+	constexpr int SlotHealthPotion = 11;
+	constexpr int SlotGreaterHealthPotion = 12;
+	constexpr int SlotSpeedPotion = 13;
+	constexpr int SlotJumpPotion = 14;
+	constexpr int SlotGuardPotion = 15;
+	constexpr int SlotIronHelmet = 16;
+	constexpr int SlotIronArmor = 17;
+	constexpr int SlotSwiftBoots = 18;
+	constexpr int SlotLuckyCharm = 19;
+	constexpr int SlotPistol = 20;
+	constexpr int SlotBullet = 21;
+	constexpr int SlotBow = 22;
+	constexpr int SlotArrow = 23;
 	constexpr int InventoryEmptyItem = -1;
 	constexpr int BlockInventorySlotCount = 8;
+	constexpr int InventoryItemCount = 24;
 
 	enum class InventoryItemKind
 	{
@@ -315,6 +332,19 @@ namespace
 		Furniture,
 		Equipment,
 		Consumable,
+		Ammo,
+		Material,
+	};
+
+	enum class EquipmentSlot
+	{
+		None,
+		Weapon,
+		Tool,
+		Helmet,
+		Armor,
+		Boots,
+		Accessory,
 	};
 
 	struct EquipmentStats
@@ -323,7 +353,50 @@ namespace
 		const char* role = "";
 		int attackBonus = 0;
 		int defenseBonus = 0;
+		float moveSpeedBonus = 0.0f;
+		float jumpSpeedBonus = 0.0f;
 		float chopSpeedMultiplier = 1.0f;
+		EquipmentSlot slot = EquipmentSlot::None;
+	};
+
+	struct InventoryItemInfo
+	{
+		int id = InventoryEmptyItem;
+		const char* constantName = "";
+		const char* name = "";
+		InventoryItemKind kind = InventoryItemKind::Empty;
+		EquipmentSlot equipmentSlot = EquipmentSlot::None;
+		const char* actionLabel = "";
+		int maxStack = 99;
+		int attackBonus = 0;
+		int defenseBonus = 0;
+		float moveSpeedBonus = 0.0f;
+		float jumpSpeedBonus = 0.0f;
+		float chopSpeedMultiplier = 1.0f;
+		int healAmount = 0;
+		float buffDuration = 0.0f;
+		int requiredItem = InventoryEmptyItem;
+		int requiredAmount = 0;
+		int actionDamage = 0;
+		float actionRangeTiles = 0.0f;
+		float iconR = 0.70f;
+		float iconG = 0.75f;
+		float iconB = 0.78f;
+	};
+
+	struct RecipeIngredient
+	{
+		int item = InventoryEmptyItem;
+		int amount = 0;
+	};
+
+	struct CraftingRecipeInfo
+	{
+		const char* action = "";
+		int outputItem = InventoryEmptyItem;
+		int outputAmount = 1;
+		bool requiresTable = true;
+		RecipeIngredient ingredients[4] = {};
 	};
 
 	constexpr unsigned short InventoryTileIndices[] =
@@ -357,29 +430,104 @@ namespace
 		BlockCrystalOre,
 		BlockWood,
 	};
+	constexpr InventoryItemInfo InventoryItems[InventoryItemCount] =
+	{
+		{ SlotGrass, "SlotGrass", "풀 블록", InventoryItemKind::TerrainBlock },
+		{ SlotDirt, "SlotDirt", "흙 블록", InventoryItemKind::TerrainBlock },
+		{ SlotStone, "SlotStone", "돌", InventoryItemKind::TerrainBlock },
+		{ SlotOre, "SlotOre", "광석", InventoryItemKind::TerrainBlock },
+		{ SlotSand, "SlotSand", "모래", InventoryItemKind::TerrainBlock },
+		{ SlotWood, "SlotWood", "나무", InventoryItemKind::TerrainBlock },
+		{ SlotLeaves, "SlotLeaves", "잎", InventoryItemKind::TerrainBlock },
+		{ SlotCraftingTable, "SlotCraftingTable", "작업대", InventoryItemKind::Furniture },
+		{ SlotSword, "SlotSword", "검", InventoryItemKind::Equipment, EquipmentSlot::Weapon, "", 1, 28, 0, 0.0f, 0.0f, 1.0f },
+		{ SlotAxe, "SlotAxe", "도끼", InventoryItemKind::Equipment, EquipmentSlot::Tool, "", 1, 4, 0, 0.0f, 0.0f, 4.5f },
+		{ SlotTeleportPotion, "SlotTeleportPotion", "텔레포트 물약", InventoryItemKind::Consumable, EquipmentSlot::None, "텔레포트", 16, 0, 0, 0.0f, 0.0f, 1.0f, 0, 0.0f, InventoryEmptyItem, 0, 0, 0.0f, 0.44f, 0.30f, 0.96f },
+		{ SlotHealthPotion, "SlotHealthPotion", "HP 물약", InventoryItemKind::Consumable, EquipmentSlot::None, "HP 회복", 16, 0, 0, 0.0f, 0.0f, 1.0f, 35, 0.0f, InventoryEmptyItem, 0, 0, 0.0f, 0.92f, 0.20f, 0.24f },
+		{ SlotGreaterHealthPotion, "SlotGreaterHealthPotion", "대형 HP 물약", InventoryItemKind::Consumable, EquipmentSlot::None, "대형 HP 회복", 8, 0, 0, 0.0f, 0.0f, 1.0f, 70, 0.0f, InventoryEmptyItem, 0, 0, 0.0f, 1.00f, 0.42f, 0.30f },
+		{ SlotSpeedPotion, "SlotSpeedPotion", "속도 물약", InventoryItemKind::Consumable, EquipmentSlot::None, "속도 강화", 8, 0, 0, 1.8f, 0.0f, 1.0f, 0, 18.0f, InventoryEmptyItem, 0, 0, 0.0f, 0.26f, 0.86f, 0.48f },
+		{ SlotJumpPotion, "SlotJumpPotion", "점프 물약", InventoryItemKind::Consumable, EquipmentSlot::None, "점프 강화", 8, 0, 0, 0.0f, 4.0f, 1.0f, 0, 18.0f, InventoryEmptyItem, 0, 0, 0.0f, 0.98f, 0.84f, 0.24f },
+		{ SlotGuardPotion, "SlotGuardPotion", "방어 물약", InventoryItemKind::Consumable, EquipmentSlot::None, "방어 강화", 8, 0, 4, 0.0f, 0.0f, 1.0f, 0, 22.0f, InventoryEmptyItem, 0, 0, 0.0f, 0.28f, 0.78f, 0.96f },
+		{ SlotIronHelmet, "SlotIronHelmet", "철 투구", InventoryItemKind::Equipment, EquipmentSlot::Helmet, "", 1, 0, 2, 0.0f, 0.0f, 1.0f },
+		{ SlotIronArmor, "SlotIronArmor", "철 갑옷", InventoryItemKind::Equipment, EquipmentSlot::Armor, "", 1, 0, 5, 0.0f, 0.0f, 1.0f },
+		{ SlotSwiftBoots, "SlotSwiftBoots", "신속의 신발", InventoryItemKind::Equipment, EquipmentSlot::Boots, "", 1, 0, 1, 1.2f, 0.6f, 1.0f },
+		{ SlotLuckyCharm, "SlotLuckyCharm", "행운 부적", InventoryItemKind::Equipment, EquipmentSlot::Accessory, "", 1, 2, 1, 0.0f, 0.0f, 1.0f },
+		{ SlotPistol, "SlotPistol", "권총", InventoryItemKind::Equipment, EquipmentSlot::Weapon, "", 1, 8, 0, 0.0f, 0.0f, 1.0f, 0, 0.0f, SlotBullet, 1, 34, 22.0f },
+		{ SlotBullet, "SlotBullet", "총알", InventoryItemKind::Ammo, EquipmentSlot::None, "", 99 },
+		{ SlotBow, "SlotBow", "활", InventoryItemKind::Equipment, EquipmentSlot::Weapon, "", 1, 6, 0, 0.0f, 0.0f, 1.0f, 0, 0.0f, SlotArrow, 1, 24, 16.0f },
+		{ SlotArrow, "SlotArrow", "화살", InventoryItemKind::Ammo, EquipmentSlot::None, "", 99 },
+	};
+	constexpr CraftingRecipeInfo CraftingRecipes[] =
+	{
+		{ "작업대 제작", SlotCraftingTable, 1, false, { { SlotWood, 4 } } },
+		{ "검 제작", SlotSword, 1, true, { { SlotWood, 2 }, { SlotStone, 3 } } },
+		{ "도끼 제작", SlotAxe, 1, true, { { SlotWood, 3 }, { SlotStone, 2 } } },
+		{ "HP 물약 제작", SlotHealthPotion, 1, true, { { SlotLeaves, 2 }, { SlotSand, 1 } } },
+		{ "대형 HP 물약 제작", SlotGreaterHealthPotion, 1, true, { { SlotHealthPotion, 2 }, { SlotOre, 1 } } },
+		{ "속도 물약 제작", SlotSpeedPotion, 1, true, { { SlotLeaves, 3 }, { SlotOre, 1 } } },
+		{ "점프 물약 제작", SlotJumpPotion, 1, true, { { SlotLeaves, 2 }, { SlotSand, 2 } } },
+		{ "방어 물약 제작", SlotGuardPotion, 1, true, { { SlotStone, 2 }, { SlotOre, 1 } } },
+		{ "철 투구 제작", SlotIronHelmet, 1, true, { { SlotOre, 4 } } },
+		{ "철 갑옷 제작", SlotIronArmor, 1, true, { { SlotOre, 8 } } },
+		{ "신속의 신발 제작", SlotSwiftBoots, 1, true, { { SlotOre, 3 }, { SlotSand, 2 } } },
+		{ "행운 부적 제작", SlotLuckyCharm, 1, true, { { SlotOre, 3 }, { SlotLeaves, 3 } } },
+		{ "권총 제작", SlotPistol, 1, true, { { SlotOre, 6 }, { SlotWood, 2 } } },
+		{ "총알 제작", SlotBullet, 12, true, { { SlotOre, 1 } } },
+		{ "활 제작", SlotBow, 1, true, { { SlotWood, 3 }, { SlotLeaves, 2 } } },
+		{ "화살 제작", SlotArrow, 8, true, { { SlotWood, 1 }, { SlotStone, 1 } } },
+	};
+	constexpr int CraftingRecipeCount = static_cast<int>(sizeof(CraftingRecipes) / sizeof(CraftingRecipes[0]));
+
+	unsigned short GetBlockAtlasTileIndex(unsigned short tileIndex)
+	{
+		constexpr int remapCount = static_cast<int>(sizeof(BlockAtlasTileRemap) / sizeof(BlockAtlasTileRemap[0]));
+		if (tileIndex < remapCount)
+			return BlockAtlasTileRemap[tileIndex];
+
+		return tileIndex;
+	}
 
 	EquipmentStats GetEquipmentStatsForSlot(int slot)
 	{
-		if (slot == SlotSword)
-			return { "검", "전투", 28, 0, 1.0f };
-		if (slot == SlotAxe)
-			return { "도끼", "채집", 4, 0, 4.5f };
+		if (slot >= 0 && slot < InventoryItemCount && InventoryItems[slot].kind == InventoryItemKind::Equipment)
+		{
+			const InventoryItemInfo& item = InventoryItems[slot];
+			return
+			{
+				item.name,
+				item.equipmentSlot == EquipmentSlot::Tool ? "채집" :
+					(item.equipmentSlot == EquipmentSlot::Weapon ? "전투" :
+						(item.equipmentSlot == EquipmentSlot::Accessory ? "장신구" : "방어구")),
+				item.attackBonus,
+				item.defenseBonus,
+				item.moveSpeedBonus,
+				item.jumpSpeedBonus,
+				item.chopSpeedMultiplier,
+				item.equipmentSlot,
+			};
+		}
 
 		return {};
 	}
 
+	const InventoryItemInfo& GetInventoryItemInfo(int item)
+	{
+		if (item >= 0 && item < InventoryItemCount)
+			return InventoryItems[item];
+
+		static constexpr InventoryItemInfo EmptyInfo = {};
+		return EmptyInfo;
+	}
+
 	InventoryItemKind GetInventoryItemKind(int slot)
 	{
-		if (slot == SlotCraftingTable)
-			return InventoryItemKind::Furniture;
-		if (slot >= 0 && slot < BlockInventorySlotCount)
-			return InventoryItemKind::TerrainBlock;
-		if (slot == SlotSword || slot == SlotAxe)
-			return InventoryItemKind::Equipment;
-		if (slot == SlotTeleportPotion)
-			return InventoryItemKind::Consumable;
+		return GetInventoryItemInfo(slot).kind;
+	}
 
-		return InventoryItemKind::Empty;
+	const char* GetInventoryItemName(int item)
+	{
+		const char* name = GetInventoryItemInfo(item).name;
+		return name != nullptr && name[0] != '\0' ? name : "빈칸";
 	}
 
 	bool IsTopSurfaceOnlyItem(int slot)
@@ -825,7 +973,8 @@ void GameEngine::Update()
 	UpdateInventoryInput();
 	UpdateCrafting(deltaTime);
 	UpdateDebugLogInput();
-	TryUseTeleportPotion();
+	UpdateMainActionInput();
+	UpdateConsumableEffects(deltaTime);
 	TryPlaceSelectedBlock(deltaTime);
 	UpdateBlockBreaking(deltaTime);
 	UpdatePlayer(deltaTime);
@@ -842,6 +991,7 @@ void GameEngine::Update()
 	cpuStats.monstersMs = CounterMilliseconds(sectionStart, sectionEnd);
 	sectionStart = sectionEnd;
 
+	UpdateProjectiles(deltaTime);
 	UpdateDroppedItems(deltaTime);
 	UpdateLeafParticles(deltaTime);
 	UpdateNetwork(deltaTime);

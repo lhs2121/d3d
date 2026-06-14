@@ -139,10 +139,13 @@ private:
 	const char* GetNetworkModeText() const;
 	void UpdateMapReveal();
 	void RevealAllMap();
+	void ResetMapReveal();
 	void UpdatePlayer(float deltaTime);
 	void UpdateInventoryInput();
 	void UpdateCrafting(float deltaTime);
 	void UpdateDebugLogInput();
+	void UpdateMainActionInput();
+	void UpdateConsumableEffects(float deltaTime);
 	void ClampCraftingScrollOffset();
 	int GetCraftingRecipeCount() const;
 	int GetVisibleCraftingRecipeRows() const;
@@ -152,6 +155,9 @@ private:
 	bool CraftTable();
 	bool CraftRecipe(int recipeIndex);
 	bool TryUseTeleportPotion();
+	bool TryUseHealthPotion(int item);
+	bool TryUseBuffPotion(int item);
+	bool TryUseRangedWeapon(int weaponItem);
 	int GetInventorySlotItem(int slot) const;
 	int GetSelectedInventoryItem() const;
 	int GetInventoryItemCount(int item) const;
@@ -166,6 +172,7 @@ private:
 	void UpdateBlockBreaking(float deltaTime);
 	void UpdateMonsters(float deltaTime);
 	void UpdateDroppedItems(float deltaTime);
+	void UpdateProjectiles(float deltaTime);
 	void UpdateLeafParticles(float deltaTime);
 	void DrawWorld();
 	void DrawBackground();
@@ -182,11 +189,14 @@ private:
 	void DrawLeafParticles();
 	void DrawMonsters();
 	void DrawDroppedItems();
+	void DrawProjectiles();
 	void DrawRemotePlayers();
 	void DrawPlayerAttackMotion();
 	void DrawAttackArc();
 	void DrawInventory();
 	void DrawWeaponIcon(float centerX, float centerY, float size, float depth, float alpha, int slot);
+	void DrawPotionIcon(float centerX, float centerY, float size, float depth, float alpha, int item);
+	void DrawAmmoIcon(float centerX, float centerY, float size, float depth, float alpha, int item);
 	void DrawTeleportPotionIcon(float centerX, float centerY, float size, float depth, float alpha);
 	void DrawInventoryItemIcon(int item, float centerX, float centerY, float size, float depth, float alpha);
 	void DrawMinimap();
@@ -195,6 +205,8 @@ private:
 	void DrawNetworkStatus();
 	void DrawEquipmentTooltip();
 	void DrawCraftingPanel();
+	void DrawMainActionPanel();
+	void DrawPerformanceOverlay();
 	void DrawDebugLogPanel();
 	void DrawUiShell();
 	void DrawUiPanel(const UiRect& rect, const char* title, float depth = -6.2f);
@@ -240,6 +252,7 @@ private:
 	bool IsCraftingTableNearby() const;
 	bool TryHarvestTreeAt(int tileX, int tileY);
 	float GetBlockBreakDuration(unsigned short tileIndex) const;
+	int GetBestEquipmentItem(int equipmentSlot) const;
 	int GetPlayerMaxHealth() const;
 	int GetPlayerDefense() const;
 	int GetPlayerAttackDamage() const;
@@ -248,6 +261,7 @@ private:
 	float GetSelectedChopSpeedMultiplier() const;
 	void SpawnLeafBreakEffect(int tileX, int tileY);
 	void SpawnLeafBreakEffectWithSeed(int tileX, int tileY, unsigned int seed);
+	void SpawnProjectile(int weaponItem, float directionX, float directionY, int damage);
 	bool IsGroundBelowBox(float centerX, float centerY, float width, float height) const;
 	void SetStatusText(const char* text, float duration);
 	void AddBlockToInventory(unsigned short tileIndex, int amount);
@@ -279,6 +293,7 @@ private:
 	std::vector<MonsterState> m_monsters;
 	std::vector<DroppedItemState> m_droppedItems;
 	std::vector<LeafParticleState> m_leafParticles;
+	std::vector<ProjectileState> m_projectiles;
 	std::vector<int> m_monsterGridHeads;
 	std::vector<int> m_monsterGridNext;
 	std::vector<int> m_monsterQueryScratch;
@@ -328,6 +343,9 @@ private:
 	float m_playerHurtFlashTimer = 0.0f;
 	float m_playerKnockbackTimer = 0.0f;
 	float m_playerKnockbackCooldownTimer = 0.0f;
+	float m_speedPotionTimer = 0.0f;
+	float m_jumpPotionTimer = 0.0f;
+	float m_guardPotionTimer = 0.0f;
 	float m_attackCooldown = 0.0f;
 	float m_attackTimer = 0.0f;
 	float m_blockPlaceRepeatTimer = 0.0f;
@@ -366,7 +384,7 @@ private:
 	bool m_localNicknameSelecting = false;
 	bool m_acceptInput = false;
 	bool m_showRenderStats = false;
-	bool m_frameLimitEnabled = false;
+	bool m_frameLimitEnabled = true;
 	bool m_timerResolutionRaised = false;
 	bool m_uiConsumesLeftMouse = false;
 	bool m_minimapExpanded = false;

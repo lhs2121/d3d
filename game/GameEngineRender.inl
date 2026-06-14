@@ -458,6 +458,7 @@ void GameEngine::DrawWorld()
 	DrawHoveredBlockOutline();
 	DrawLeafParticles();
 	DrawDroppedItems();
+	DrawProjectiles();
 	DrawMonsters();
 	DrawRemotePlayers();
 
@@ -541,12 +542,13 @@ void GameEngine::DrawWorld()
 	DrawInventory();
 	if (!m_minimapExpanded)
 		DrawMinimap();
-	DrawPlayerStatsPanel();
 	DrawCraftingPanel();
-	DrawDebugLogPanel();
+	DrawMainActionPanel();
+	DrawPlayerStatsPanel();
 	if (m_minimapExpanded)
 		DrawMinimap();
 	DrawEquipmentTooltip();
+	DrawPerformanceOverlay();
 }
 
 void GameEngine::DrawBlockCracks()
@@ -657,7 +659,7 @@ void GameEngine::DrawLeafParticles()
 		leafDesc.height = leafDesc.width;
 		leafDesc.atlasColumns = BlockAtlasColumns;
 		leafDesc.atlasRows = BlockAtlasRows;
-		leafDesc.tileIndex = BlockLeaves;
+		leafDesc.tileIndex = GetBlockAtlasTileIndex(BlockLeaves);
 		leafDesc.rotationRadians = particle.rotation;
 		leafDesc.colorR = 0.70f + progress * 0.16f;
 		leafDesc.colorG = 1.0f;
@@ -797,9 +799,83 @@ void GameEngine::DrawDroppedItems()
 		itemDesc.height = itemSize;
 		itemDesc.atlasColumns = BlockAtlasColumns;
 		itemDesc.atlasRows = BlockAtlasRows;
-		itemDesc.tileIndex = GetDroppedItemTileIndex(item.tileIndex);
+		itemDesc.tileIndex = GetBlockAtlasTileIndex(GetDroppedItemTileIndex(item.tileIndex));
 		itemDesc.depth = -0.90f;
 		m_renderer->DrawSprite(itemDesc);
+	}
+}
+
+void GameEngine::DrawProjectiles()
+{
+	const float viewHalfWidth = GetViewHalfWidth();
+	const float viewHalfHeight = GetViewHalfHeight();
+	const float cullMargin = m_tileSize * 2.0f;
+	for (const ProjectileState& projectile : m_projectiles)
+	{
+		if (!projectile.alive)
+			continue;
+
+		const float drawX = projectile.x - m_cameraX;
+		const float drawY = projectile.y - m_cameraY;
+		if (drawX < -viewHalfWidth - cullMargin || drawX > viewHalfWidth + cullMargin ||
+			drawY < -viewHalfHeight - cullMargin || drawY > viewHalfHeight + cullMargin)
+			continue;
+
+		const float angle = std::atan2(projectile.velocityY, projectile.velocityX);
+		if (projectile.item == SlotBow)
+		{
+			SpriteDesc shaftDesc;
+			shaftDesc.textureFile = nullptr;
+			shaftDesc.positionX = drawX;
+			shaftDesc.positionY = drawY;
+			shaftDesc.width = 18.0f;
+			shaftDesc.height = 2.0f;
+			shaftDesc.rotationRadians = angle;
+			shaftDesc.colorR = 0.70f;
+			shaftDesc.colorG = 0.48f;
+			shaftDesc.colorB = 0.22f;
+			shaftDesc.colorA = 1.0f;
+			shaftDesc.depth = -1.72f;
+			m_renderer->DrawSprite(shaftDesc);
+
+			SpriteDesc headDesc = shaftDesc;
+			headDesc.positionX = drawX + std::cos(angle) * 8.0f;
+			headDesc.positionY = drawY + std::sin(angle) * 8.0f;
+			headDesc.width = 5.0f;
+			headDesc.height = 3.0f;
+			headDesc.colorR = 0.86f;
+			headDesc.colorG = 0.90f;
+			headDesc.colorB = 0.88f;
+			headDesc.depth = -1.78f;
+			m_renderer->DrawSprite(headDesc);
+			continue;
+		}
+
+		SpriteDesc trailDesc;
+		trailDesc.textureFile = nullptr;
+		trailDesc.positionX = drawX - std::cos(angle) * 4.0f;
+		trailDesc.positionY = drawY - std::sin(angle) * 4.0f;
+		trailDesc.width = 13.0f;
+		trailDesc.height = 2.4f;
+		trailDesc.rotationRadians = angle;
+		trailDesc.colorR = 1.0f;
+		trailDesc.colorG = 0.86f;
+		trailDesc.colorB = 0.34f;
+		trailDesc.colorA = 0.88f;
+		trailDesc.depth = -1.72f;
+		m_renderer->DrawSprite(trailDesc);
+
+		SpriteDesc coreDesc = trailDesc;
+		coreDesc.positionX = drawX + std::cos(angle) * 3.0f;
+		coreDesc.positionY = drawY + std::sin(angle) * 3.0f;
+		coreDesc.width = 5.0f;
+		coreDesc.height = 3.2f;
+		coreDesc.colorR = 1.0f;
+		coreDesc.colorG = 0.98f;
+		coreDesc.colorB = 0.82f;
+		coreDesc.colorA = 1.0f;
+		coreDesc.depth = -1.80f;
+		m_renderer->DrawSprite(coreDesc);
 	}
 }
 
@@ -1156,6 +1232,108 @@ void GameEngine::DrawInventory()
 
 void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float depth, float alpha, int slot)
 {
+	if (slot == SlotIronHelmet || slot == SlotIronArmor || slot == SlotSwiftBoots || slot == SlotLuckyCharm)
+	{
+		const InventoryItemInfo& item = GetInventoryItemInfo(slot);
+		SpriteDesc baseDesc;
+		baseDesc.textureFile = nullptr;
+		baseDesc.positionX = centerX;
+		baseDesc.positionY = centerY;
+		baseDesc.width = size * (slot == SlotIronArmor ? 0.62f : 0.54f);
+		baseDesc.height = size * (slot == SlotSwiftBoots ? 0.34f : 0.50f);
+		baseDesc.colorR = slot == SlotLuckyCharm ? 0.88f : item.iconR;
+		baseDesc.colorG = slot == SlotLuckyCharm ? 0.74f : item.iconG;
+		baseDesc.colorB = slot == SlotLuckyCharm ? 0.26f : item.iconB;
+		baseDesc.colorA = alpha;
+		baseDesc.depth = depth;
+		if (slot == SlotIronHelmet)
+		{
+			baseDesc.positionY = centerY + size * 0.03f;
+			baseDesc.height = size * 0.42f;
+		}
+		else if (slot == SlotSwiftBoots)
+		{
+			baseDesc.rotationRadians = -0.18f;
+		}
+		else if (slot == SlotLuckyCharm)
+		{
+			baseDesc.width = size * 0.46f;
+			baseDesc.height = size * 0.46f;
+			baseDesc.rotationRadians = 0.78f;
+		}
+		m_renderer->DrawSprite(baseDesc);
+
+		SpriteDesc shineDesc = baseDesc;
+		shineDesc.positionX -= size * 0.13f;
+		shineDesc.positionY += size * 0.12f;
+		shineDesc.width = size * 0.09f;
+		shineDesc.height = size * 0.24f;
+		shineDesc.colorR = 0.96f;
+		shineDesc.colorG = 0.98f;
+		shineDesc.colorB = 0.92f;
+		shineDesc.colorA = alpha * 0.72f;
+		shineDesc.depth = depth - 0.10f;
+		m_renderer->DrawSprite(shineDesc);
+		return;
+	}
+
+	if (slot == SlotPistol)
+	{
+		SpriteDesc barrelDesc;
+		barrelDesc.textureFile = nullptr;
+		barrelDesc.positionX = centerX + size * 0.10f;
+		barrelDesc.positionY = centerY + size * 0.06f;
+		barrelDesc.width = size * 0.62f;
+		barrelDesc.height = size * 0.18f;
+		barrelDesc.colorR = 0.40f;
+		barrelDesc.colorG = 0.46f;
+		barrelDesc.colorB = 0.50f;
+		barrelDesc.colorA = alpha;
+		barrelDesc.depth = depth;
+		m_renderer->DrawSprite(barrelDesc);
+
+		SpriteDesc gripDesc = barrelDesc;
+		gripDesc.positionX = centerX - size * 0.12f;
+		gripDesc.positionY = centerY - size * 0.19f;
+		gripDesc.width = size * 0.18f;
+		gripDesc.height = size * 0.44f;
+		gripDesc.rotationRadians = -0.32f;
+		gripDesc.colorR = 0.24f;
+		gripDesc.colorG = 0.16f;
+		gripDesc.colorB = 0.10f;
+		gripDesc.depth = depth - 0.05f;
+		m_renderer->DrawSprite(gripDesc);
+		return;
+	}
+
+	if (slot == SlotBow)
+	{
+		SpriteDesc bowDesc;
+		bowDesc.textureFile = nullptr;
+		bowDesc.positionX = centerX;
+		bowDesc.positionY = centerY;
+		bowDesc.width = size * 0.16f;
+		bowDesc.height = size * 0.82f;
+		bowDesc.rotationRadians = -0.28f;
+		bowDesc.colorR = 0.58f;
+		bowDesc.colorG = 0.32f;
+		bowDesc.colorB = 0.12f;
+		bowDesc.colorA = alpha;
+		bowDesc.depth = depth;
+		m_renderer->DrawSprite(bowDesc);
+
+		SpriteDesc stringDesc = bowDesc;
+		stringDesc.positionX = centerX + size * 0.18f;
+		stringDesc.width = size * 0.04f;
+		stringDesc.height = size * 0.76f;
+		stringDesc.colorR = 0.88f;
+		stringDesc.colorG = 0.86f;
+		stringDesc.colorB = 0.76f;
+		stringDesc.depth = depth - 0.08f;
+		m_renderer->DrawSprite(stringDesc);
+		return;
+	}
+
 	if (slot == SlotAxe)
 	{
 		SpriteDesc handleDesc;
@@ -1245,6 +1423,102 @@ void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float 
 	m_renderer->DrawSprite(handleDesc);
 }
 
+void GameEngine::DrawPotionIcon(float centerX, float centerY, float size, float depth, float alpha, int item)
+{
+	const InventoryItemInfo& info = GetInventoryItemInfo(item);
+	SpriteDesc corkDesc;
+	corkDesc.textureFile = nullptr;
+	corkDesc.positionX = centerX;
+	corkDesc.positionY = centerY + size * 0.33f;
+	corkDesc.width = size * 0.22f;
+	corkDesc.height = size * 0.16f;
+	corkDesc.colorR = 0.50f;
+	corkDesc.colorG = 0.28f;
+	corkDesc.colorB = 0.12f;
+	corkDesc.colorA = alpha;
+	corkDesc.depth = depth - 0.08f;
+	m_renderer->DrawSprite(corkDesc);
+
+	SpriteDesc bodyDesc = corkDesc;
+	bodyDesc.positionY = centerY - size * 0.07f;
+	bodyDesc.width = size * 0.58f;
+	bodyDesc.height = size * 0.58f;
+	bodyDesc.colorR = info.iconR;
+	bodyDesc.colorG = info.iconG;
+	bodyDesc.colorB = info.iconB;
+	bodyDesc.colorA = alpha * 0.86f;
+	bodyDesc.depth = depth - 0.04f;
+	m_renderer->DrawSprite(bodyDesc);
+
+	SpriteDesc neckDesc = bodyDesc;
+	neckDesc.positionY = centerY + size * 0.18f;
+	neckDesc.width = size * 0.28f;
+	neckDesc.height = size * 0.22f;
+	neckDesc.colorR = info.iconR + 0.10f;
+	neckDesc.colorG = info.iconG + 0.10f;
+	neckDesc.colorB = info.iconB + 0.10f;
+	neckDesc.colorA = alpha * 0.72f;
+	neckDesc.depth = depth - 0.06f;
+	m_renderer->DrawSprite(neckDesc);
+
+	SpriteDesc shineDesc = bodyDesc;
+	shineDesc.positionX = centerX - size * 0.15f;
+	shineDesc.positionY = centerY + size * 0.02f;
+	shineDesc.width = size * 0.08f;
+	shineDesc.height = size * 0.28f;
+	shineDesc.colorR = 0.92f;
+	shineDesc.colorG = 1.0f;
+	shineDesc.colorB = 1.0f;
+	shineDesc.colorA = alpha * 0.68f;
+	shineDesc.depth = depth - 0.12f;
+	m_renderer->DrawSprite(shineDesc);
+}
+
+void GameEngine::DrawAmmoIcon(float centerX, float centerY, float size, float depth, float alpha, int item)
+{
+	if (item == SlotArrow)
+	{
+		SpriteDesc shaftDesc;
+		shaftDesc.textureFile = nullptr;
+		shaftDesc.positionX = centerX;
+		shaftDesc.positionY = centerY;
+		shaftDesc.width = size * 0.82f;
+		shaftDesc.height = size * 0.07f;
+		shaftDesc.rotationRadians = 0.35f;
+		shaftDesc.colorR = 0.70f;
+		shaftDesc.colorG = 0.50f;
+		shaftDesc.colorB = 0.28f;
+		shaftDesc.colorA = alpha;
+		shaftDesc.depth = depth;
+		m_renderer->DrawSprite(shaftDesc);
+
+		SpriteDesc headDesc = shaftDesc;
+		headDesc.positionX = centerX + size * 0.35f;
+		headDesc.positionY = centerY + size * 0.13f;
+		headDesc.width = size * 0.18f;
+		headDesc.height = size * 0.14f;
+		headDesc.colorR = 0.78f;
+		headDesc.colorG = 0.82f;
+		headDesc.colorB = 0.82f;
+		headDesc.depth = depth - 0.08f;
+		m_renderer->DrawSprite(headDesc);
+		return;
+	}
+
+	SpriteDesc bulletDesc;
+	bulletDesc.textureFile = nullptr;
+	bulletDesc.positionX = centerX;
+	bulletDesc.positionY = centerY;
+	bulletDesc.width = size * 0.24f;
+	bulletDesc.height = size * 0.56f;
+	bulletDesc.colorR = 0.88f;
+	bulletDesc.colorG = 0.72f;
+	bulletDesc.colorB = 0.30f;
+	bulletDesc.colorA = alpha;
+	bulletDesc.depth = depth;
+	m_renderer->DrawSprite(bulletDesc);
+}
+
 void GameEngine::DrawTeleportPotionIcon(float centerX, float centerY, float size, float depth, float alpha)
 {
 	SpriteDesc corkDesc;
@@ -1315,9 +1589,15 @@ void GameEngine::DrawInventoryItemIcon(int item, float centerX, float centerY, f
 		return;
 	}
 
-	if (item == SlotTeleportPotion)
+	if (kind == InventoryItemKind::Consumable)
 	{
-		DrawTeleportPotionIcon(centerX, centerY, size, depth, alpha);
+		DrawPotionIcon(centerX, centerY, size, depth, alpha, item);
+		return;
+	}
+
+	if (kind == InventoryItemKind::Ammo)
+	{
+		DrawAmmoIcon(centerX, centerY, size, depth, alpha, item);
 		return;
 	}
 
@@ -1332,7 +1612,7 @@ void GameEngine::DrawInventoryItemIcon(int item, float centerX, float centerY, f
 		blockDesc.height = size;
 		blockDesc.atlasColumns = BlockAtlasColumns;
 		blockDesc.atlasRows = BlockAtlasRows;
-		blockDesc.tileIndex = InventoryTileIndices[item];
+		blockDesc.tileIndex = GetBlockAtlasTileIndex(InventoryTileIndices[item]);
 		blockDesc.colorA = alpha;
 		blockDesc.depth = depth;
 		m_renderer->DrawSprite(blockDesc);
@@ -1657,11 +1937,13 @@ void GameEngine::DrawNetworkStatus()
 
 void GameEngine::DrawPlayerStatsPanel()
 {
-	const UiRect panel = GetRightPanelRect(2);
-	DrawUiPanel(panel, "status");
-	const float contentLeft = panel.left + panel.width * (40.0f / UiStatusFrameWidth);
-	const float contentTop = panel.top - panel.height * (64.0f / UiStatusFrameHeight);
-	const float lineHeight = panel.height * (32.0f / UiStatusFrameHeight);
+	const UiRect panel = GetLogPanelRect();
+	DrawUiPanel(panel, "status-log");
+	const float leftColumnX = panel.left + panel.width * (38.0f / UiLogFrameWidth);
+	const float rightColumnX = panel.left + panel.width * (332.0f / UiLogFrameWidth);
+	const float contentTop = panel.top - panel.height * (66.0f / UiInventoryFrameHeight);
+	const float lineHeight = panel.height * (27.0f / UiInventoryFrameHeight);
+	const float wideTextWidth = panel.width * (260.0f / UiLogFrameWidth);
 
 	auto drawPanelText = [this](float x, float y, const char* text, float size,
 		float colorR, float colorG, float colorB)
@@ -1681,6 +1963,7 @@ void GameEngine::DrawPlayerStatsPanel()
 	char jumpText[32] = {};
 	char chopText[32] = {};
 	char gearText[32] = {};
+	char selectedText[80] = {};
 	std::snprintf(hpText, sizeof(hpText), "체력 %d/%d", m_playerHealth, GetPlayerMaxHealth());
 	std::snprintf(attackText, sizeof(attackText), "공격 %d", GetPlayerAttackDamage());
 	std::snprintf(defenseText, sizeof(defenseText), "방어 %d", GetPlayerDefense());
@@ -1689,13 +1972,96 @@ void GameEngine::DrawPlayerStatsPanel()
 	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", GetSelectedChopSpeedMultiplier());
 	std::snprintf(gearText, sizeof(gearText), "장비 %s", equipment.name);
 
-	drawPanelText(contentLeft, contentTop, hpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(contentLeft, contentTop - lineHeight, attackText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(contentLeft, contentTop - lineHeight * 2.0f, defenseText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(contentLeft, contentTop - lineHeight * 3.0f, speedText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(contentLeft, contentTop - lineHeight * 4.0f, jumpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(contentLeft, contentTop - lineHeight * 5.0f, chopText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
-	drawPanelText(contentLeft, contentTop - lineHeight * 6.0f, gearText, 1.30f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop, hpText, 1.22f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop - lineHeight, attackText, 1.22f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop - lineHeight * 2.0f, defenseText, 1.22f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop - lineHeight * 3.0f, speedText, 1.22f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop - lineHeight * 4.0f, jumpText, 1.22f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop - lineHeight * 5.0f, chopText, 1.22f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(leftColumnX, contentTop - lineHeight * 6.0f, gearText, 1.16f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+
+	const char* selectedName = selectedItem != InventoryEmptyItem ? GetInventoryItemName(selectedItem) : "빈칸";
+	std::snprintf(selectedText, sizeof(selectedText), "슬롯 %d  %s  수량 %d",
+		selectedSlot + 1,
+		selectedName,
+		m_inventory.GetSlotCount(selectedSlot));
+	drawPanelText(rightColumnX, contentTop, selectedText, 1.14f, UiThemeMutedR, UiThemeMutedG, UiThemeMutedB);
+
+	if (m_statusTextTimer > 0.0f && m_statusText[0] != '\0')
+	{
+		DrawUiWrappedText(rightColumnX, contentTop - lineHeight * 1.4f, m_statusText.data(), 1.15f,
+			wideTextWidth, 16.0f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+	}
+	if (m_networkMode != NetworkConfig::Mode::SinglePlayer)
+	{
+		char peerText[80] = {};
+		BuildNetworkPeerListText(peerText, sizeof(peerText));
+		char networkText[128] = {};
+		if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
+			std::snprintf(networkText, sizeof(networkText), "통신 참가 대기");
+		else
+			std::snprintf(networkText, sizeof(networkText), "통신 %s %s / %s", GetNetworkModeText(), GetLocalNickname(), peerText);
+		DrawUiWrappedText(rightColumnX, contentTop - lineHeight * 3.4f, networkText, 1.08f,
+			wideTextWidth, 15.0f, UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 1.0f, -8.0f);
+	}
+}
+
+void GameEngine::DrawMainActionPanel()
+{
+	const UiRect panel = GetRightPanelRect(2);
+	DrawUiPanel(panel, "actions");
+
+	const float listLeft = panel.left + panel.width * (38.0f / UiStatusFrameWidth);
+	const float listTop = panel.top - panel.height * (72.0f / UiStatusFrameHeight);
+	const float listWidth = panel.width * (400.0f / UiStatusFrameWidth);
+	const float rowHeight = panel.height * (30.0f / UiStatusFrameHeight);
+	const float rowCenterX = listLeft + listWidth * 0.5f;
+	int rowIndex = 0;
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
+	const auto drawAction = [&](const char* label, int count)
+	{
+		const float rowCenterY = listTop - rowHeight * (static_cast<float>(rowIndex) + 0.5f);
+		const bool hovered = hasCursor && IsPointInsideRect(cursorX, cursorY, rowCenterX, rowCenterY, listWidth, rowHeight - 2.0f);
+		DrawSolidRect(rowCenterX, rowCenterY, listWidth, rowHeight - 2.0f,
+			hovered ? 0.28f : UiThemeBodyR,
+			hovered ? 0.39f : UiThemeBodyG,
+			hovered ? 0.46f : UiThemeBodyB,
+			hovered ? 0.96f : 0.74f,
+			-6.8f);
+
+		char text[64] = {};
+		if (count > 0)
+			std::snprintf(text, sizeof(text), "%s x%d", label, count);
+		else
+			std::snprintf(text, sizeof(text), "%s", label);
+		DrawUiText(listLeft + 8.0f, rowCenterY + 4.0f, text, 1.13f,
+			hovered ? UiThemeCreamR : 0.66f,
+			hovered ? UiThemeCreamG : 0.72f,
+			hovered ? UiThemeCreamB : 0.72f,
+			1.0f, -8.0f);
+		++rowIndex;
+	};
+
+	if (GetInventoryItemCount(SlotHealthPotion) > 0)
+		drawAction(GetInventoryItemInfo(SlotHealthPotion).actionLabel, GetInventoryItemCount(SlotHealthPotion));
+	if (GetInventoryItemCount(SlotGreaterHealthPotion) > 0)
+		drawAction(GetInventoryItemInfo(SlotGreaterHealthPotion).actionLabel, GetInventoryItemCount(SlotGreaterHealthPotion));
+	if (GetInventoryItemCount(SlotSpeedPotion) > 0)
+		drawAction(GetInventoryItemInfo(SlotSpeedPotion).actionLabel, GetInventoryItemCount(SlotSpeedPotion));
+	if (GetInventoryItemCount(SlotJumpPotion) > 0)
+		drawAction(GetInventoryItemInfo(SlotJumpPotion).actionLabel, GetInventoryItemCount(SlotJumpPotion));
+	if (GetInventoryItemCount(SlotGuardPotion) > 0)
+		drawAction(GetInventoryItemInfo(SlotGuardPotion).actionLabel, GetInventoryItemCount(SlotGuardPotion));
+	const int teleportCount = GetInventoryItemCount(SlotTeleportPotion);
+	if (teleportCount > 0)
+		drawAction(GetInventoryItemInfo(SlotTeleportPotion).actionLabel, teleportCount);
+
+	if (rowIndex == 0)
+		DrawUiText(listLeft + 8.0f, listTop - rowHeight * 0.5f + 4.0f, "사용 가능한 액션 없음", 1.10f,
+			UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 1.0f, -8.0f);
 }
 
 void GameEngine::DrawEquipmentTooltip()
@@ -1798,11 +2164,33 @@ void GameEngine::DrawCraftingPanel()
 
 	auto getRow = [this](int recipeIndex)
 	{
-		if (recipeIndex == 1)
-			return CraftingRow{ "검 제작", CanCraftSword() };
-		if (recipeIndex == 2)
-			return CraftingRow{ "도끼 제작", CanCraftAxe() };
-		return CraftingRow{ "작업대 제작", CanCraftTable() };
+		const bool tableNearby = IsCraftingTableNearby();
+		int visibleIndex = 0;
+		for (const CraftingRecipeInfo& recipe : CraftingRecipes)
+		{
+			if (recipe.requiresTable && !tableNearby)
+				continue;
+			if (visibleIndex != recipeIndex)
+			{
+				++visibleIndex;
+				continue;
+			}
+
+			bool craftable = true;
+			for (const RecipeIngredient& ingredient : recipe.ingredients)
+			{
+				if (ingredient.item == InventoryEmptyItem || ingredient.amount <= 0)
+					continue;
+				if (GetInventoryItemCount(ingredient.item) < ingredient.amount)
+				{
+					craftable = false;
+					break;
+				}
+			}
+			return CraftingRow{ recipe.action, craftable };
+		}
+
+		return CraftingRow{ "", false };
 	};
 
 	const int recipeCount = GetCraftingRecipeCount();
@@ -2052,16 +2440,8 @@ void GameEngine::DrawDebugLogPanel()
 
 	char selectedText[80] = {};
 	const int selectedSlot = m_inventory.GetSelectedSlot();
-	const char* selectedName = IsInventoryBlockSlot(selectedSlot) ? "블록" : "빈칸";
 	const int selectedItem = GetSelectedInventoryItem();
-	if (selectedItem == SlotSword)
-		selectedName = "검";
-	else if (selectedItem == SlotAxe)
-		selectedName = "도끼";
-	else if (selectedItem == SlotTeleportPotion)
-		selectedName = "텔레포트 물약";
-	else if (selectedItem == SlotCraftingTable)
-		selectedName = "작업대";
+	const char* selectedName = selectedItem != InventoryEmptyItem ? GetInventoryItemName(selectedItem) : "빈칸";
 	std::snprintf(selectedText, sizeof(selectedText), "슬롯 %d  %s  수량 %d",
 		selectedSlot + 1,
 		selectedName,
@@ -2106,7 +2486,7 @@ void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
 			sourceHeight = UiInventoryFrameHeight;
 			titleCenterTextureX = InventorySidebarWidth + (UiInventoryFrameWidth - InventorySidebarWidth) * 0.5f;
 		}
-		else if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0)
+		else if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0 || std::strcmp(title, "status-log") == 0)
 		{
 			sourceWidth = UiLogFrameWidth;
 			sourceHeight = UiInventoryFrameHeight;
@@ -2119,6 +2499,12 @@ void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
 			titleCenterTextureX = sourceWidth * 0.5f;
 		}
 		else if (std::strcmp(title, "status") == 0)
+		{
+			sourceWidth = UiStatusFrameWidth;
+			sourceHeight = UiStatusFrameHeight;
+			titleCenterTextureX = sourceWidth * 0.5f;
+		}
+		else if (std::strcmp(title, "actions") == 0)
 		{
 			sourceWidth = UiStatusFrameWidth;
 			sourceHeight = UiStatusFrameHeight;
@@ -2137,6 +2523,43 @@ void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
 		DrawText(titleX, titleY, displayTitle, titleSize,
 			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, depth - 1.35f);
 	}
+}
+
+void GameEngine::DrawPerformanceOverlay()
+{
+	if (!m_showRenderStats || m_renderer == nullptr)
+		return;
+
+	RenderFrameStats stats;
+	m_renderer->GetLastFrameStats(stats);
+
+	const float x = -GetViewHalfWidth() + 10.0f;
+	float y = GetViewHalfHeight() - 14.0f;
+	const float lineHeight = 12.0f;
+	const float size = 1.10f;
+	const auto drawOverlayLine = [this, x, &y, lineHeight, size](const char* text)
+	{
+		DrawText(x + 1.0f, y - 1.0f, text, size, 0.0f, 0.0f, 0.0f, 0.78f, -11.8f);
+		DrawText(x, y, text, size, 1.0f, 1.0f, 1.0f, 1.0f, -12.0f);
+		y -= lineHeight;
+	};
+
+	char text[96] = {};
+	std::snprintf(text, sizeof(text), "FPS %.0f  %.1fms  %s",
+		m_displayFps, m_displayFrameMs, m_frameLimitEnabled ? "CAP ON" : "CAP OFF");
+	drawOverlayLine(text);
+	std::snprintf(text, sizeof(text), "CPU %.2fms  SIM %.2fms  RENDER %.2fms",
+		m_displayCpuStats.totalMs, m_displayCpuStats.simulationMs, m_displayCpuStats.renderMs);
+	drawOverlayLine(text);
+	std::snprintf(text, sizeof(text), "DRAW %.2fms  CALLS %u  TEX %u",
+		m_displayCpuStats.drawWorldMs, stats.drawCalls, stats.textureBinds);
+	drawOverlayLine(text);
+	std::snprintf(text, sizeof(text), "TILES %u  CHUNKS %u/%u",
+		stats.gridVisibleTiles, stats.gridChunksDrawn, stats.gridChunksRebuilt);
+	drawOverlayLine(text);
+	std::snprintf(text, sizeof(text), "UPLOAD DYN %uKB  GRID %uKB",
+		stats.dynamicBufferUploadBytes / 1024u, stats.gridUploadBytes / 1024u);
+	drawOverlayLine(text);
 }
 
 void GameEngine::DrawClassicUiPanel(const UiRect& rect, const char* title, float depth)
