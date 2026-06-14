@@ -141,22 +141,26 @@ void GameEngine::UpdateStartMenu(float deltaTime)
 		{
 			const int action = GetStartMenuActionAt(cursorX, cursorY);
 			m_startJoinHostEditing = action == StartMenuActionInput;
+			m_startNicknameEditing = action == StartMenuActionNickname;
 			if (action == StartMenuActionSingle)
 			{
 				m_networkConfig.mode = NetworkConfig::Mode::SinglePlayer;
 				m_startJoinHostEditing = false;
+				m_startNicknameEditing = false;
 				SetMultiplayerMenuStatus("싱글플레이 선택됨");
 			}
 			else if (action == StartMenuActionHost)
 			{
 				m_networkConfig.mode = NetworkConfig::Mode::Host;
 				m_startJoinHostEditing = false;
+				m_startNicknameEditing = false;
 				SetMultiplayerMenuStatus("호스트 선택됨");
 			}
 			else if (action == StartMenuActionJoin)
 			{
 				m_networkConfig.mode = NetworkConfig::Mode::Client;
 				m_startJoinHostEditing = true;
+				m_startNicknameEditing = false;
 				SetMultiplayerMenuStatus("참가 선택됨");
 			}
 			else if (action == StartMenuActionStart)
@@ -168,10 +172,21 @@ void GameEngine::UpdateStartMenu(float deltaTime)
 
 	if (IsKeyDown(VK_RETURN))
 	{
+		if (m_startNicknameEditing)
+		{
+			m_startNicknameEditing = false;
+			return;
+		}
 		if (!m_startJoinHostEditing)
 			BeginSelectedGameFromMenu();
 		else if (m_networkConfig.mode == NetworkConfig::Mode::Client && m_multiplayerJoinHost[0] != '\0')
 			BeginSelectedGameFromMenu();
+		return;
+	}
+
+	if (m_startNicknameEditing)
+	{
+		UpdateLocalNicknameInput();
 		return;
 	}
 
@@ -237,7 +252,7 @@ void GameEngine::DrawStartMenu()
 	panel.height = 382.0f;
 	panel.left = -panel.width * 0.5f;
 	panel.top = panel.height * 0.5f + 12.0f;
-	DrawUiPanel(panel, nullptr);
+	DrawUiPanel(panel, "network");
 
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
@@ -249,9 +264,9 @@ void GameEngine::DrawStartMenu()
 	{
 		const bool hovered = hoverAction == action;
 		DrawSolidRect(centerX, centerY, width, height,
-			selected ? 0.78f : (hovered ? 0.105f : 0.060f),
-			selected ? 0.86f : (hovered ? 0.130f : 0.070f),
-			selected ? 0.74f : (hovered ? 0.095f : 0.075f),
+			selected ? 0.42f : (hovered ? 0.34f : UiThemeBodyDarkR),
+			selected ? 0.18f : (hovered ? 0.15f : UiThemeBodyDarkG),
+			selected ? 0.05f : (hovered ? 0.05f : UiThemeBodyDarkB),
 			0.98f, -6.2f);
 
 		RectOutlineDesc outline;
@@ -260,17 +275,17 @@ void GameEngine::DrawStartMenu()
 		outline.width = width;
 		outline.height = height;
 		outline.thickness = selected ? 2.3f : (hovered ? 1.8f : 1.2f);
-		outline.colorR = hovered || selected ? 0.82f : 0.42f;
-		outline.colorG = hovered || selected ? 0.88f : 0.48f;
-		outline.colorB = hovered || selected ? 0.78f : 0.42f;
+		outline.colorR = hovered || selected ? UiThemeCreamR : UiThemeMutedR;
+		outline.colorG = hovered || selected ? UiThemeCreamG : UiThemeMutedG;
+		outline.colorB = hovered || selected ? UiThemeCreamB : UiThemeMutedB;
 		outline.colorA = 0.96f;
 		outline.depth = -7.4f;
 		m_renderer->DrawRectOutline(outline);
 
 		DrawCenteredUiText(centerX, centerY + 6.0f, text, 1.55f,
-			selected ? 0.055f : 0.84f,
-			selected ? 0.050f : 0.90f,
-			selected ? 0.070f : 0.80f,
+			selected ? UiThemeBodyDarkR : UiThemeCreamR,
+			selected ? UiThemeBodyDarkG : UiThemeCreamG,
+			selected ? UiThemeBodyDarkB : UiThemeCreamB,
 			1.0f, -8.0f);
 	};
 
@@ -285,13 +300,39 @@ void GameEngine::DrawStartMenu()
 
 	const float inputWidth = panel.width - 56.0f;
 	const float inputCenterX = panel.left + panel.width * 0.5f;
-	const float inputCenterY = panel.top - 123.0f;
+	const float nicknameCenterY = panel.top - 112.0f;
+	const bool nicknameHovered = hoverAction == StartMenuActionNickname;
+	DrawSolidRect(inputCenterX, nicknameCenterY, inputWidth, 30.0f,
+		m_startNicknameEditing ? 0.385f : (nicknameHovered ? 0.350f : UiThemeBodyDarkR),
+		m_startNicknameEditing ? 0.350f : (nicknameHovered ? 0.320f : UiThemeBodyDarkG),
+		m_startNicknameEditing ? 0.330f : (nicknameHovered ? 0.305f : UiThemeBodyDarkB),
+		0.98f, -6.2f);
+
+	RectOutlineDesc nicknameOutline;
+	nicknameOutline.positionX = inputCenterX;
+	nicknameOutline.positionY = nicknameCenterY;
+	nicknameOutline.width = inputWidth;
+	nicknameOutline.height = 30.0f;
+	nicknameOutline.thickness = m_startNicknameEditing ? 2.0f : 1.2f;
+	nicknameOutline.colorR = UiThemeCreamR;
+	nicknameOutline.colorG = UiThemeCreamG;
+	nicknameOutline.colorB = UiThemeCreamB;
+	nicknameOutline.colorA = 0.96f;
+	nicknameOutline.depth = -7.5f;
+	m_renderer->DrawRectOutline(nicknameOutline);
+
+	char nicknameText[72] = {};
+	std::snprintf(nicknameText, sizeof(nicknameText), "닉네임 %s%s", GetLocalNickname(), m_startNicknameEditing ? "-" : "");
+	DrawUiText(inputCenterX - inputWidth * 0.5f + 12.0f, nicknameCenterY + 5.5f, nicknameText, 1.24f,
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+
+	const float inputCenterY = panel.top - 151.0f;
 	const bool inputHovered = hoverAction == StartMenuActionInput;
 	const bool inputActive = selectedMode == NetworkConfig::Mode::Client;
 	DrawSolidRect(inputCenterX, inputCenterY, inputWidth, 34.0f,
-		m_startJoinHostEditing ? 0.105f : (inputHovered && inputActive ? 0.090f : 0.060f),
-		m_startJoinHostEditing ? 0.130f : (inputHovered && inputActive ? 0.110f : 0.070f),
-		m_startJoinHostEditing ? 0.095f : (inputHovered && inputActive ? 0.090f : 0.075f),
+		m_startJoinHostEditing ? 0.385f : (inputHovered && inputActive ? 0.350f : UiThemeBodyDarkR),
+		m_startJoinHostEditing ? 0.350f : (inputHovered && inputActive ? 0.320f : UiThemeBodyDarkG),
+		m_startJoinHostEditing ? 0.330f : (inputHovered && inputActive ? 0.305f : UiThemeBodyDarkB),
 		inputActive ? 0.98f : 0.46f, -6.2f);
 
 	RectOutlineDesc inputOutline;
@@ -300,25 +341,25 @@ void GameEngine::DrawStartMenu()
 	inputOutline.width = inputWidth;
 	inputOutline.height = 34.0f;
 	inputOutline.thickness = m_startJoinHostEditing ? 2.0f : 1.2f;
-	inputOutline.colorR = inputActive ? 0.82f : 0.42f;
-	inputOutline.colorG = inputActive ? 0.88f : 0.48f;
-	inputOutline.colorB = inputActive ? 0.78f : 0.42f;
+	inputOutline.colorR = inputActive ? UiThemeCreamR : UiThemeMutedR;
+	inputOutline.colorG = inputActive ? UiThemeCreamG : UiThemeMutedG;
+	inputOutline.colorB = inputActive ? UiThemeCreamB : UiThemeMutedB;
 	inputOutline.colorA = inputActive ? 0.96f : 0.46f;
 	inputOutline.depth = -7.5f;
 	m_renderer->DrawRectOutline(inputOutline);
 
 	char inputText[72] = {};
-	std::snprintf(inputText, sizeof(inputText), "%s%s", m_multiplayerJoinHost.data(), m_startJoinHostEditing ? "-" : "");
+	std::snprintf(inputText, sizeof(inputText), "주소 %s%s", m_multiplayerJoinHost.data(), m_startJoinHostEditing ? "-" : "");
 	DrawUiText(inputCenterX - inputWidth * 0.5f + 12.0f, inputCenterY + 6.0f, inputText, 1.55f,
-		inputActive ? 0.86f : 0.48f, inputActive ? 0.92f : 0.52f, inputActive ? 0.80f : 0.48f,
+		inputActive ? UiThemeCreamR : UiThemeMutedR, inputActive ? UiThemeCreamG : UiThemeMutedG, inputActive ? UiThemeCreamB : UiThemeMutedB,
 		1.0f, -8.0f);
 
-	const float startY = panel.top - 186.0f;
+	const float startY = panel.top - 218.0f;
 	drawChoice(inputCenterX, startY, 220.0f, 48.0f, "게임 시작", StartMenuActionStart, false);
 
 	if (m_multiplayerMenuStatus[0] != '\0')
-		DrawUiText(panel.left + 28.0f, panel.top - 268.0f, m_multiplayerMenuStatus.data(), 1.35f,
-			0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
+		DrawUiText(panel.left + 28.0f, panel.top - 294.0f, m_multiplayerMenuStatus.data(), 1.35f,
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
 }
 
 void GameEngine::BeginSelectedGameFromMenu()
@@ -333,6 +374,7 @@ void GameEngine::BeginSelectedGameFromMenu()
 		{
 			SetMultiplayerMenuStatus("호스트 주소를 입력하세요");
 			m_startJoinHostEditing = true;
+			m_startNicknameEditing = false;
 			return;
 		}
 
@@ -352,6 +394,7 @@ void GameEngine::BeginSelectedGameFromMenu()
 		m_gameStarted = true;
 		m_multiplayerMenuOpen = false;
 		m_startJoinHostEditing = false;
+		m_startNicknameEditing = false;
 		SetStatusText("싱글플레이 시작", 1.8f);
 		return;
 	}
@@ -364,6 +407,7 @@ void GameEngine::BeginSelectedGameFromMenu()
 			m_gameStarted = true;
 			m_multiplayerMenuOpen = false;
 			m_startJoinHostEditing = false;
+			m_startNicknameEditing = false;
 			RefreshLocalNetworkAddress();
 			CopyTextToClipboard(m_localNetworkAddress.data());
 			char status[64] = {};
@@ -381,6 +425,8 @@ void GameEngine::BeginSelectedGameFromMenu()
 	{
 		if (m_networkMode == NetworkConfig::Mode::Client)
 		{
+			m_startJoinHostEditing = false;
+			m_startNicknameEditing = false;
 			SetMultiplayerMenuStatus("호스트 참가 중");
 			SetStatusText("호스트 참가 중", 1.4f);
 			return;
@@ -412,13 +458,16 @@ int GameEngine::GetStartMenuActionAt(float viewX, float viewY) const
 	if (IsPointInsideRect(viewX, viewY, panel.left + 44.0f + choiceWidth * 2.5f, choiceY, choiceWidth, 42.0f))
 		return StartMenuActionJoin;
 
+	if (IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 112.0f, panel.width - 56.0f, 30.0f))
+		return StartMenuActionNickname;
+
 	if (m_networkConfig.mode == NetworkConfig::Mode::Client &&
-		IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 123.0f, panel.width - 56.0f, 34.0f))
+		IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 151.0f, panel.width - 56.0f, 34.0f))
 	{
 		return StartMenuActionInput;
 	}
 
-	if (IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 186.0f, 220.0f, 48.0f))
+	if (IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 218.0f, 220.0f, 48.0f))
 		return StartMenuActionStart;
 
 	return MultiplayerActionNone;
@@ -434,6 +483,7 @@ void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 	{
 		m_multiplayerMenuOpen = false;
 		m_multiplayerJoinHostEditing = false;
+		m_multiplayerNicknameEditing = false;
 		return;
 	}
 
@@ -445,21 +495,26 @@ void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 		{
 			const int action = GetMultiplayerMenuActionAt(cursorX, cursorY);
 			m_multiplayerJoinHostEditing = action == MultiplayerActionInput;
+			m_multiplayerNicknameEditing = action == MultiplayerActionNickname;
 			if (action == MultiplayerActionHost)
 			{
+				m_multiplayerNicknameEditing = false;
 				TryBeginMenuHost();
 			}
 			else if (action == MultiplayerActionJoin)
 			{
+				m_multiplayerNicknameEditing = false;
 				TryBeginMenuJoin();
 			}
 			else if (action == MultiplayerActionClose)
 			{
 				m_multiplayerMenuOpen = false;
 				m_multiplayerJoinHostEditing = false;
+				m_multiplayerNicknameEditing = false;
 			}
 			else if (action == MultiplayerActionCopyIp)
 			{
+				m_multiplayerNicknameEditing = false;
 				RefreshLocalNetworkAddress();
 				if (CopyTextToClipboard(m_localNetworkAddress.data()))
 					SetMultiplayerMenuStatus("주소 복사됨");
@@ -467,6 +522,18 @@ void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 					SetMultiplayerMenuStatus("복사 실패");
 			}
 		}
+	}
+
+	if (m_multiplayerNicknameEditing)
+	{
+		if (IsKeyDown(VK_RETURN))
+		{
+			m_multiplayerNicknameEditing = false;
+			return;
+		}
+
+		UpdateLocalNicknameInput();
+		return;
 	}
 
 	if (!m_multiplayerJoinHostEditing)
@@ -531,7 +598,7 @@ void GameEngine::DrawMultiplayerMenu()
 		return;
 
 	const UiRect panel = GetRightPanelRect(2);
-	DrawUiPanel(panel, nullptr);
+	DrawUiPanel(panel, "network");
 	const float panelLeft = panel.left;
 	const float panelTop = panel.top;
 
@@ -544,9 +611,9 @@ void GameEngine::DrawMultiplayerMenu()
 	{
 		const bool hovered = hoverAction == action;
 		DrawSolidRect(centerX, centerY, width, height,
-			hovered ? 0.78f : 0.060f,
-			hovered ? 0.86f : 0.070f,
-			hovered ? 0.74f : 0.075f,
+			hovered ? 0.42f : UiThemeBodyDarkR,
+			hovered ? 0.18f : UiThemeBodyDarkG,
+			hovered ? 0.05f : UiThemeBodyDarkB,
 			0.96f, -9.5f);
 
 		RectOutlineDesc buttonOutline;
@@ -555,17 +622,17 @@ void GameEngine::DrawMultiplayerMenu()
 		buttonOutline.width = width;
 		buttonOutline.height = height;
 		buttonOutline.thickness = hovered ? 2.2f : 1.4f;
-		buttonOutline.colorR = hovered ? 0.82f : 0.42f;
-		buttonOutline.colorG = hovered ? 0.88f : 0.48f;
-		buttonOutline.colorB = hovered ? 0.78f : 0.42f;
+		buttonOutline.colorR = hovered ? UiThemeCreamR : UiThemeMutedR;
+		buttonOutline.colorG = hovered ? UiThemeCreamG : UiThemeMutedG;
+		buttonOutline.colorB = hovered ? UiThemeCreamB : UiThemeMutedB;
 		buttonOutline.colorA = 0.95f;
 		buttonOutline.depth = -10.0f;
 		m_renderer->DrawRectOutline(buttonOutline);
 
 		DrawCenteredUiText(centerX, centerY + 5.0f, text, 1.30f,
-			hovered ? 0.055f : 0.84f,
-			hovered ? 0.050f : 0.90f,
-			hovered ? 0.070f : 0.80f,
+			hovered ? UiThemeBodyDarkR : UiThemeCreamR,
+			hovered ? UiThemeBodyDarkG : UiThemeCreamG,
+			hovered ? UiThemeBodyDarkB : UiThemeCreamB,
 			1.0f, -10.2f);
 	};
 
@@ -574,14 +641,40 @@ void GameEngine::DrawMultiplayerMenu()
 	drawButton(panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 42.0f, buttonWidth, 24.0f, "참가", MultiplayerActionJoin);
 
 	const float inputCenterX = panelLeft + panel.width * 0.5f;
-	const float inputCenterY = panelTop - 68.0f;
 	const float inputWidth = panel.width - 24.0f;
 	const float inputHeight = 24.0f;
+	const float nicknameCenterY = panelTop - 70.0f;
+	const bool nicknameHovered = hoverAction == MultiplayerActionNickname;
+	DrawSolidRect(inputCenterX, nicknameCenterY, inputWidth, inputHeight,
+		m_multiplayerNicknameEditing ? 0.385f : (nicknameHovered ? 0.350f : UiThemeBodyDarkR),
+		m_multiplayerNicknameEditing ? 0.350f : (nicknameHovered ? 0.320f : UiThemeBodyDarkG),
+		m_multiplayerNicknameEditing ? 0.330f : (nicknameHovered ? 0.305f : UiThemeBodyDarkB),
+		0.98f, -9.5f);
+
+	RectOutlineDesc nicknameOutline;
+	nicknameOutline.positionX = inputCenterX;
+	nicknameOutline.positionY = nicknameCenterY;
+	nicknameOutline.width = inputWidth;
+	nicknameOutline.height = inputHeight;
+	nicknameOutline.thickness = m_multiplayerNicknameEditing ? 2.0f : 1.3f;
+	nicknameOutline.colorR = UiThemeCreamR;
+	nicknameOutline.colorG = UiThemeCreamG;
+	nicknameOutline.colorB = UiThemeCreamB;
+	nicknameOutline.colorA = 0.96f;
+	nicknameOutline.depth = -10.0f;
+	m_renderer->DrawRectOutline(nicknameOutline);
+
+	char nicknameText[72] = {};
+	std::snprintf(nicknameText, sizeof(nicknameText), "닉네임 %s%s", GetLocalNickname(), m_multiplayerNicknameEditing ? "-" : "");
+	DrawUiText(inputCenterX - inputWidth * 0.5f + 9.0f, nicknameCenterY + 5.0f, nicknameText, 1.08f,
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -10.2f);
+
+	const float inputCenterY = panelTop - 98.0f;
 	const bool inputHovered = hoverAction == MultiplayerActionInput;
 	DrawSolidRect(inputCenterX, inputCenterY, inputWidth, inputHeight,
-		m_multiplayerJoinHostEditing ? 0.105f : (inputHovered ? 0.090f : 0.060f),
-		m_multiplayerJoinHostEditing ? 0.130f : (inputHovered ? 0.110f : 0.070f),
-		m_multiplayerJoinHostEditing ? 0.095f : (inputHovered ? 0.090f : 0.075f),
+		m_multiplayerJoinHostEditing ? 0.385f : (inputHovered ? 0.350f : UiThemeBodyDarkR),
+		m_multiplayerJoinHostEditing ? 0.350f : (inputHovered ? 0.320f : UiThemeBodyDarkG),
+		m_multiplayerJoinHostEditing ? 0.330f : (inputHovered ? 0.305f : UiThemeBodyDarkB),
 		0.98f, -9.5f);
 
 	RectOutlineDesc inputOutline;
@@ -590,29 +683,29 @@ void GameEngine::DrawMultiplayerMenu()
 	inputOutline.width = inputWidth;
 	inputOutline.height = inputHeight;
 	inputOutline.thickness = m_multiplayerJoinHostEditing ? 2.0f : 1.3f;
-	inputOutline.colorR = 0.82f;
-	inputOutline.colorG = 0.88f;
-	inputOutline.colorB = 0.78f;
+	inputOutline.colorR = UiThemeCreamR;
+	inputOutline.colorG = UiThemeCreamG;
+	inputOutline.colorB = UiThemeCreamB;
 	inputOutline.colorA = 0.96f;
 	inputOutline.depth = -10.0f;
 	m_renderer->DrawRectOutline(inputOutline);
 
 	char inputText[72] = {};
-	std::snprintf(inputText, sizeof(inputText), "%s%s", m_multiplayerJoinHost.data(), m_multiplayerJoinHostEditing ? "-" : "");
-	DrawUiText(inputCenterX - inputWidth * 0.5f + 9.0f, inputCenterY + 5.0f, inputText, 1.24f,
-		0.86f, 0.92f, 0.80f, 1.0f, -10.2f);
+	std::snprintf(inputText, sizeof(inputText), "주소 %s%s", m_multiplayerJoinHost.data(), m_multiplayerJoinHostEditing ? "-" : "");
+	DrawUiText(inputCenterX - inputWidth * 0.5f + 9.0f, inputCenterY + 5.0f, inputText, 1.08f,
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -10.2f);
 
 	char localIpText[80] = {};
 	std::snprintf(localIpText, sizeof(localIpText), "내 주소 %s", m_localNetworkAddress[0] != '\0' ? m_localNetworkAddress.data() : "호스트 먼저");
-	DrawUiText(panelLeft + 12.0f, panelTop - 93.0f, localIpText, 1.12f,
-		0.72f, 0.82f, 0.68f, 1.0f, -10.0f);
-	drawButton(panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 119.0f, buttonWidth, 22.0f, "주소 복사", MultiplayerActionCopyIp);
-	drawButton(panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 119.0f, buttonWidth, 22.0f, "닫기", MultiplayerActionClose);
+	DrawUiText(panelLeft + 12.0f, panelTop - 123.0f, localIpText, 1.00f,
+		0.72f, 0.66f, 0.60f, 1.0f, -10.0f);
+	drawButton(panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 149.0f, buttonWidth, 22.0f, "주소 복사", MultiplayerActionCopyIp);
+	drawButton(panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 149.0f, buttonWidth, 22.0f, "닫기", MultiplayerActionClose);
 
 	if (m_multiplayerMenuStatus[0] != '\0')
 	{
 		DrawUiText(panelLeft + 12.0f, panelTop - panel.height + 18.0f, m_multiplayerMenuStatus.data(), 1.12f,
-			0.86f, 0.92f, 0.80f, 1.0f, -10.0f);
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -10.0f);
 	}
 }
 
@@ -725,6 +818,156 @@ void GameEngine::PasteMultiplayerJoinHostFromClipboard()
 	SetMultiplayerMenuStatus("붙여넣음");
 }
 
+void GameEngine::AppendLocalNicknameChar(char value)
+{
+	if (!IsNicknameInputCharacter(value))
+		return;
+
+	const size_t length = std::strlen(m_localNickname.data());
+	if (length + 1 >= m_localNickname.size())
+		return;
+
+	m_localNickname[length] = value;
+	m_localNickname[length + 1] = '\0';
+}
+
+void GameEngine::PasteLocalNicknameFromClipboard()
+{
+	if (!OpenClipboard(nullptr))
+		return;
+
+	HANDLE clipboardData = GetClipboardData(CF_TEXT);
+	if (clipboardData == nullptr)
+	{
+		CloseClipboard();
+		return;
+	}
+
+	const char* text = static_cast<const char*>(GlobalLock(clipboardData));
+	if (text == nullptr)
+	{
+		CloseClipboard();
+		return;
+	}
+
+	m_localNickname[0] = '\0';
+	for (const char* cursor = text; *cursor != '\0'; ++cursor)
+	{
+		if (!IsNicknameInputCharacter(*cursor))
+			continue;
+
+		AppendLocalNicknameChar(*cursor);
+		if (std::strlen(m_localNickname.data()) + 1 >= m_localNickname.size())
+			break;
+	}
+
+	GlobalUnlock(clipboardData);
+	CloseClipboard();
+	if (m_localNickname[0] == '\0')
+		std::snprintf(m_localNickname.data(), m_localNickname.size(), "PLAYER");
+	SetMultiplayerMenuStatus("닉네임 붙여넣음");
+}
+
+void GameEngine::UpdateLocalNicknameInput()
+{
+	if ((IsKeyHeld(VK_CONTROL) || IsKeyHeld(VK_LCONTROL) || IsKeyHeld(VK_RCONTROL)) &&
+		IsKeyDown(0x56))
+	{
+		PasteLocalNicknameFromClipboard();
+		return;
+	}
+
+	if (IsKeyDown(VK_BACK))
+	{
+		const size_t length = std::strlen(m_localNickname.data());
+		if (length > 0)
+			m_localNickname[length - 1] = '\0';
+		return;
+	}
+
+	if (IsKeyDown(VK_SPACE))
+	{
+		AppendLocalNicknameChar(' ');
+		return;
+	}
+
+	if (IsKeyDown(VK_OEM_MINUS) || IsKeyDown(VK_SUBTRACT))
+	{
+		AppendLocalNicknameChar('-');
+		return;
+	}
+
+	for (int digit = 0; digit <= 9; ++digit)
+	{
+		if (IsKeyDown(0x30 + digit) || IsKeyDown(VK_NUMPAD0 + digit))
+		{
+			AppendLocalNicknameChar(static_cast<char>('0' + digit));
+			return;
+		}
+	}
+
+	for (int letter = 0; letter < 26; ++letter)
+	{
+		const int keyCode = 0x41 + letter;
+		if (IsKeyDown(keyCode))
+		{
+			AppendLocalNicknameChar(static_cast<char>('A' + letter));
+			return;
+		}
+	}
+}
+
+const char* GameEngine::GetLocalNickname() const
+{
+	return m_localNickname[0] != '\0' ? m_localNickname.data() : "PLAYER";
+}
+
+void GameEngine::CopyLocalNicknameTo(char* destination, size_t destinationSize) const
+{
+	if (destination == nullptr || destinationSize == 0)
+		return;
+
+	std::snprintf(destination, destinationSize, "%s", GetLocalNickname());
+}
+
+void GameEngine::BuildNetworkPeerListText(char* destination, size_t destinationSize) const
+{
+	if (destination == nullptr || destinationSize == 0)
+		return;
+
+	destination[0] = '\0';
+	size_t used = 0;
+	int appended = 0;
+	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	{
+		if (!remotePlayer.active)
+			continue;
+
+		char fallback[16] = {};
+		const char* name = remotePlayer.nickname[0] != '\0' ? remotePlayer.nickname.data() : nullptr;
+		if (name == nullptr)
+		{
+			std::snprintf(fallback, sizeof(fallback), "P%d", remotePlayer.id);
+			name = fallback;
+		}
+
+		const int written = std::snprintf(destination + used, destinationSize - used,
+			"%s%s", appended > 0 ? "," : "", name);
+		if (written < 0)
+			break;
+
+		const size_t available = destinationSize - used;
+		const size_t consumed = static_cast<size_t>(written);
+		used += (std::min)(consumed, available > 0 ? available - 1 : 0);
+		++appended;
+		if (used + 1 >= destinationSize)
+			break;
+	}
+
+	if (appended == 0)
+		std::snprintf(destination, destinationSize, "혼자");
+}
+
 int GameEngine::GetMultiplayerMenuActionAt(float viewX, float viewY) const
 {
 	const UiRect panel = GetRightPanelRect(2);
@@ -741,11 +984,13 @@ int GameEngine::GetMultiplayerMenuActionAt(float viewX, float viewY) const
 		return MultiplayerActionHost;
 	if (IsPointInsideRect(viewX, viewY, panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 42.0f, buttonWidth, 24.0f))
 		return MultiplayerActionJoin;
-	if (IsPointInsideRect(viewX, viewY, panelLeft + panel.width * 0.5f, panelTop - 68.0f, panel.width - 24.0f, 24.0f))
+	if (IsPointInsideRect(viewX, viewY, panelLeft + panel.width * 0.5f, panelTop - 70.0f, panel.width - 24.0f, 24.0f))
+		return MultiplayerActionNickname;
+	if (IsPointInsideRect(viewX, viewY, panelLeft + panel.width * 0.5f, panelTop - 98.0f, panel.width - 24.0f, 24.0f))
 		return MultiplayerActionInput;
-	if (IsPointInsideRect(viewX, viewY, panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 119.0f, buttonWidth, 22.0f))
+	if (IsPointInsideRect(viewX, viewY, panelLeft + 12.0f + buttonWidth * 0.5f, panelTop - 149.0f, buttonWidth, 22.0f))
 		return MultiplayerActionCopyIp;
-	if (IsPointInsideRect(viewX, viewY, panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 119.0f, buttonWidth, 22.0f))
+	if (IsPointInsideRect(viewX, viewY, panelLeft + 19.0f + buttonWidth * 1.5f, panelTop - 149.0f, buttonWidth, 22.0f))
 		return MultiplayerActionClose;
 
 	return MultiplayerActionNone;
@@ -863,6 +1108,7 @@ void GameEngine::SendLocalPlayerState()
 	packet.health = m_playerHealth;
 	packet.selectedInventorySlot = m_selectedInventorySlot;
 	packet.onGround = m_player.onGround ? 1 : 0;
+	CopyLocalNicknameTo(packet.nickname, sizeof(packet.nickname));
 
 	if (m_networkMode == NetworkConfig::Mode::Host)
 		BroadcastNetworkPacket(&packet, sizeof(packet));
@@ -1438,7 +1684,9 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		m_gameStarted = true;
 		m_multiplayerMenuOpen = false;
 		m_startJoinHostEditing = false;
+		m_startNicknameEditing = false;
 		m_multiplayerJoinHostEditing = false;
+		m_multiplayerNicknameEditing = false;
 		SetMultiplayerMenuStatus("호스트 참가 완료");
 		SetStatusText("호스트 참가 완료", 2.0f);
 		break;
@@ -1477,6 +1725,8 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		remotePlayer->attackTimer = packet->attackTimer;
 		remotePlayer->health = packet->health;
 		remotePlayer->selectedInventorySlot = packet->selectedInventorySlot;
+		std::snprintf(remotePlayer->nickname.data(), remotePlayer->nickname.size(),
+			"%.*s", NetworkNicknameLength - 1, packet->nickname);
 		remotePlayer->lastHeardTime = m_networkTime;
 		remotePlayer->active = true;
 		break;

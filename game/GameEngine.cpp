@@ -20,6 +20,7 @@ namespace
 	constexpr int KeyJump = VK_SPACE;
 	constexpr int KeyMinimap = VK_TAB;
 	constexpr float BlockBreakDuration = 0.85f;
+	constexpr float BlockPlaceRepeatInterval = 0.085f;
 	constexpr float InteractionRangeTiles = 6.0f;
 	constexpr unsigned int NetworkMagic = 0x4433444Du;
 	constexpr unsigned char NetworkVersion = 1;
@@ -35,14 +36,78 @@ namespace
 	constexpr int MultiplayerActionInput = 3;
 	constexpr int MultiplayerActionClose = 4;
 	constexpr int MultiplayerActionCopyIp = 5;
+	constexpr int MultiplayerActionNickname = 6;
 	constexpr int StartMenuActionSingle = 11;
 	constexpr int StartMenuActionHost = 12;
 	constexpr int StartMenuActionJoin = 13;
 	constexpr int StartMenuActionInput = 14;
 	constexpr int StartMenuActionStart = 15;
+	constexpr int StartMenuActionNickname = 16;
+	constexpr int NetworkNicknameLength = 24;
 	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\block_atlas_extended.png";
+	constexpr const WCHAR* UiPanelDefaultTexture = L"assets\\ui\\panel_default.png";
+	constexpr const WCHAR* UiPanelInventoryTexture = L"assets\\ui\\panel_inventory.png";
+	constexpr const WCHAR* UiPanelLogTexture = L"assets\\ui\\panel_log.png";
+	constexpr const WCHAR* UiPanelMapTexture = L"assets\\ui\\panel_map.png";
+	constexpr const WCHAR* UiPanelCraftTexture = L"assets\\ui\\panel_craft.png";
+	constexpr const WCHAR* UiPanelStatusTexture = L"assets\\ui\\panel_status.png";
+	constexpr const WCHAR* UiPanelNetworkTexture = L"assets\\ui\\panel_network.png";
+	constexpr const WCHAR* UiPanelTooltipTexture = L"assets\\ui\\panel_tooltip.png";
+	constexpr const WCHAR* UiPanelGameTexture = L"assets\\ui\\panel_game.png";
+	constexpr const WCHAR* UiPanelTextures[] =
+	{
+		UiPanelDefaultTexture,
+		UiPanelInventoryTexture,
+		UiPanelLogTexture,
+		UiPanelMapTexture,
+		UiPanelCraftTexture,
+		UiPanelStatusTexture,
+		UiPanelNetworkTexture,
+		UiPanelTooltipTexture,
+		UiPanelGameTexture,
+	};
 	constexpr int BlockAtlasColumns = 16;
 	constexpr int BlockAtlasRows = 1;
+	constexpr float UiThemeCreamR = 0.92f;
+	constexpr float UiThemeCreamG = 0.96f;
+	constexpr float UiThemeCreamB = 0.92f;
+	constexpr float UiThemeMutedR = 0.36f;
+	constexpr float UiThemeMutedG = 0.48f;
+	constexpr float UiThemeMutedB = 0.46f;
+	constexpr float UiThemeBodyR = 0.006f;
+	constexpr float UiThemeBodyG = 0.010f;
+	constexpr float UiThemeBodyB = 0.012f;
+	constexpr float UiThemeBodyDarkR = 0.002f;
+	constexpr float UiThemeBodyDarkG = 0.004f;
+	constexpr float UiThemeBodyDarkB = 0.006f;
+	constexpr float UiThemeShadowR = 0.0f;
+	constexpr float UiThemeShadowG = 0.0f;
+	constexpr float UiThemeShadowB = 0.0f;
+
+	const WCHAR* GetUiPanelTextureFile(const char* title)
+	{
+		if (title == nullptr || title[0] == '\0')
+			return UiPanelDefaultTexture;
+		if (std::strcmp(title, "inventory") == 0)
+			return UiPanelInventoryTexture;
+		if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0)
+			return UiPanelLogTexture;
+		if (std::strcmp(title, "map") == 0)
+			return UiPanelMapTexture;
+		if (std::strcmp(title, "craft") == 0)
+			return UiPanelCraftTexture;
+		if (std::strcmp(title, "status") == 0)
+			return UiPanelStatusTexture;
+		if (std::strcmp(title, "network") == 0)
+			return UiPanelNetworkTexture;
+		if (std::strcmp(title, "tooltip") == 0)
+			return UiPanelTooltipTexture;
+		if (std::strcmp(title, "game") == 0)
+			return UiPanelGameTexture;
+
+		return UiPanelDefaultTexture;
+	}
+
 	struct BackgroundImageLayer
 	{
 		const WCHAR* textureFile = nullptr;
@@ -105,6 +170,7 @@ namespace
 		int health = 100;
 		int selectedInventorySlot = 0;
 		unsigned char onGround = 0;
+		char nickname[NetworkNicknameLength] = {};
 	};
 
 	struct NetworkTileEditPacket
@@ -171,6 +237,16 @@ namespace
 			(value >= 'a' && value <= 'z') ||
 			value == '.' ||
 			value == '-';
+	}
+
+	bool IsNicknameInputCharacter(char value)
+	{
+		return (value >= '0' && value <= '9') ||
+			(value >= 'A' && value <= 'Z') ||
+			(value >= 'a' && value <= 'z') ||
+			value == '-' ||
+			value == '_' ||
+			value == ' ';
 	}
 
 	bool CopyTextToClipboard(const char* text)
@@ -282,6 +358,7 @@ namespace
 		BlockIce = 13,
 		BlockFrozenStone = 14,
 		BlockCrystalOre = 15,
+		BlockPlacedWood = 16,
 	};
 
 	constexpr int SlotGrass = 0;
@@ -295,6 +372,14 @@ namespace
 	constexpr int SlotSword = 8;
 	constexpr int SlotAxe = 9;
 	constexpr int BlockInventorySlotCount = 8;
+
+	enum class InventoryItemKind
+	{
+		Empty,
+		TerrainBlock,
+		Furniture,
+		Equipment,
+	};
 
 	struct EquipmentStats
 	{
@@ -316,6 +401,26 @@ namespace
 		BlockLeaves,
 		BlockCraftingTable,
 	};
+	constexpr unsigned short BlockAtlasTileRemap[] =
+	{
+		BlockGrass,
+		BlockDirt,
+		BlockStone,
+		BlockOre,
+		BlockSand,
+		BlockWood,
+		BlockLeaves,
+		BlockCraftingTable,
+		BlockPrairieStone,
+		BlockMossStone,
+		BlockSandstone,
+		BlockDesertStone,
+		BlockSnow,
+		BlockIce,
+		BlockFrozenStone,
+		BlockCrystalOre,
+		BlockWood,
+	};
 
 	EquipmentStats GetEquipmentStatsForSlot(int slot)
 	{
@@ -325,6 +430,41 @@ namespace
 			return { "도끼", "채집", 4, 0, 4.5f };
 
 		return {};
+	}
+
+	InventoryItemKind GetInventoryItemKind(int slot)
+	{
+		if (slot == SlotCraftingTable)
+			return InventoryItemKind::Furniture;
+		if (slot >= 0 && slot < BlockInventorySlotCount)
+			return InventoryItemKind::TerrainBlock;
+		if (slot == SlotSword || slot == SlotAxe)
+			return InventoryItemKind::Equipment;
+
+		return InventoryItemKind::Empty;
+	}
+
+	bool IsTopSurfaceOnlyItem(int slot)
+	{
+		return GetInventoryItemKind(slot) == InventoryItemKind::Furniture;
+	}
+
+	unsigned short GetPlacementTileIndexForSlot(int slot)
+	{
+		if (slot == SlotWood)
+			return BlockPlacedWood;
+		if (slot >= 0 && slot < BlockInventorySlotCount)
+			return InventoryTileIndices[slot];
+
+		return BlockGrass;
+	}
+
+	unsigned short GetDroppedItemTileIndex(unsigned short tileIndex)
+	{
+		if (tileIndex == BlockPlacedWood)
+			return BlockWood;
+
+		return tileIndex;
 	}
 
 	enum BiomeType
@@ -375,22 +515,63 @@ namespace
 		}
 	}
 
-	constexpr const WCHAR* PlayerSpriteTexture = L"assets\\char\\player_chibi_sheet.png";
-	constexpr int PlayerSpriteColumns = 9;
-	constexpr int PlayerSpriteRows = 1;
-	constexpr int PlayerIdleFrameStart = 0;
-	constexpr int PlayerWalkFrameStart = 4;
-	constexpr int PlayerJumpFrame = 8;
-	constexpr const WCHAR* MonsterSpriteTextures[BackgroundBiomeCount] =
+	constexpr const WCHAR* PlayerIdleTexture = L"assets\\player\\Sprites\\Idle.png";
+	constexpr const WCHAR* PlayerRunTexture = L"assets\\player\\Sprites\\Run.png";
+	constexpr const WCHAR* PlayerJumpTexture = L"assets\\player\\Sprites\\Jump.png";
+	constexpr const WCHAR* PlayerFallTexture = L"assets\\player\\Sprites\\Fall.png";
+	constexpr const WCHAR* PlayerAttackTexture = L"assets\\player\\Sprites\\Attack1.png";
+	constexpr const WCHAR* PlayerHitTexture = L"assets\\player\\Sprites\\Take Hit.png";
+	constexpr const WCHAR* PlayerSpriteTextures[] =
 	{
-		L"assets\\monster\\monster_grass_sheet.png",
-		L"assets\\monster\\monster_desert_sheet.png",
-		L"assets\\monster\\monster_ice_sheet.png",
+		PlayerIdleTexture,
+		PlayerRunTexture,
+		PlayerJumpTexture,
+		PlayerFallTexture,
+		PlayerAttackTexture,
+		PlayerHitTexture,
 	};
-	constexpr int MonsterSpriteColumns = 4;
+	constexpr int PlayerIdleFrames = 8;
+	constexpr int PlayerRunFrames = 8;
+	constexpr int PlayerJumpFrames = 2;
+	constexpr int PlayerFallFrames = 2;
+	constexpr int PlayerAttackFrames = 4;
+	constexpr int PlayerHitFrames = 4;
+	constexpr int PlayerSpriteRows = 1;
+	constexpr float PlayerSpriteFramePixelHeight = 150.0f;
+	constexpr float PlayerSpriteFootPixelY = 95.0f;
+	struct MonsterVisualDesc
+	{
+		const WCHAR* idleTexture = nullptr;
+		int idleFrames = 1;
+		const WCHAR* moveTexture = nullptr;
+		int moveFrames = 1;
+		const WCHAR* hurtTexture = nullptr;
+		int hurtFrames = 1;
+		float drawSize = 48.0f;
+		float yOffset = 4.0f;
+	};
+	constexpr MonsterVisualDesc MonsterVisuals[BackgroundBiomeCount] =
+	{
+		{
+			L"assets\\monster\\Sprites\\Slime\\idle.png", 14,
+			L"assets\\monster\\Sprites\\Slime\\walk.png", 6,
+			L"assets\\monster\\Sprites\\Slime\\hurt.png", 3,
+			160.0f, -6.0f,
+		},
+		{
+			L"assets\\monster\\Sprites\\Rat\\idle.png", 10,
+			L"assets\\monster\\Sprites\\Rat\\run.png", 8,
+			L"assets\\monster\\Sprites\\Rat\\hurt.png", 3,
+			72.0f, -5.0f,
+		},
+		{
+			L"assets\\monster\\Sprites\\Bat\\fly.png", 11,
+			L"assets\\monster\\Sprites\\Bat\\fly.png", 11,
+			L"assets\\monster\\Sprites\\Bat\\hurt.png", 3,
+			84.0f, 8.0f,
+		},
+	};
 	constexpr int MonsterSpriteRows = 1;
-	constexpr float MonsterSpriteDrawSize = 48.0f;
-	constexpr float MonsterSpriteYOffset = 4.0f;
 
 	struct CrackSegment
 	{
@@ -603,6 +784,8 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 	m_input->AddUser(this);
 
 	m_renderer->LoadTexture(BlockAtlasTexture);
+	for (const WCHAR* uiPanelTexture : UiPanelTextures)
+		m_renderer->LoadTexture(uiPanelTexture);
 	for (const auto& biomeLayers : SurfaceBackgroundLayers)
 	{
 		for (const BackgroundImageLayer& layer : biomeLayers)
@@ -613,9 +796,14 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 		for (const BackgroundImageLayer& layer : biomeLayers)
 			m_renderer->LoadTexture(layer.textureFile);
 	}
-	m_renderer->LoadTexture(PlayerSpriteTexture);
-	for (const WCHAR* monsterTexture : MonsterSpriteTextures)
-		m_renderer->LoadTexture(monsterTexture);
+	for (const WCHAR* playerTexture : PlayerSpriteTextures)
+		m_renderer->LoadTexture(playerTexture);
+	for (const MonsterVisualDesc& monsterVisual : MonsterVisuals)
+	{
+		m_renderer->LoadTexture(monsterVisual.idleTexture);
+		m_renderer->LoadTexture(monsterVisual.moveTexture);
+		m_renderer->LoadTexture(monsterVisual.hurtTexture);
+	}
 
 	m_networkConfig = networkConfig;
 	m_networkMode = NetworkConfig::Mode::SinglePlayer;
@@ -699,7 +887,7 @@ void GameEngine::Update()
 	UpdateInventoryInput();
 	UpdateCrafting(deltaTime);
 	UpdateDebugLogInput();
-	TryPlaceSelectedBlock();
+	TryPlaceSelectedBlock(deltaTime);
 	UpdateBlockBreaking(deltaTime);
 	UpdatePlayer(deltaTime);
 	UpdateMapReveal();

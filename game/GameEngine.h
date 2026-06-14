@@ -115,6 +115,7 @@ private:
 	struct RemotePlayerState
 	{
 		PlayerState player;
+		std::array<char, 24> nickname = {};
 		float lastHeardTime = 0.0f;
 		float attackTimer = 0.0f;
 		int id = 0;
@@ -202,6 +203,12 @@ private:
 	void TryBeginMenuJoin();
 	void AppendMultiplayerJoinHostChar(char value);
 	void PasteMultiplayerJoinHostFromClipboard();
+	void AppendLocalNicknameChar(char value);
+	void PasteLocalNicknameFromClipboard();
+	void UpdateLocalNicknameInput();
+	const char* GetLocalNickname() const;
+	void CopyLocalNicknameTo(char* destination, size_t destinationSize) const;
+	void BuildNetworkPeerListText(char* destination, size_t destinationSize) const;
 	int GetMultiplayerMenuActionAt(float viewX, float viewY) const;
 	bool IsPointInsideRect(float pointX, float pointY, float centerX, float centerY, float width, float height) const;
 	void RefreshLocalNetworkAddress();
@@ -252,7 +259,7 @@ private:
 	bool CraftAxe();
 	bool CraftTable();
 	bool CraftRecipe(int recipeIndex);
-	void TryPlaceSelectedBlock();
+	void TryPlaceSelectedBlock(float deltaTime);
 	void UpdatePlayerCombat(float deltaTime);
 	void TryPlayerAttack();
 	void UpdateBlockBreaking(float deltaTime);
@@ -385,6 +392,7 @@ private:
 	std::vector<DroppedItemState> m_pendingNetworkDroppedItems;
 	std::array<int, InventorySlotCount> m_inventoryCounts = {};
 	std::array<char, 64> m_multiplayerJoinHost = { '1', '2', '7', '.', '0', '.', '0', '.', '1', '\0' };
+	std::array<char, 24> m_localNickname = { 'P', 'L', 'A', 'Y', 'E', 'R', '\0' };
 	std::array<char, 64> m_multiplayerMenuStatus = {};
 	std::array<char, 48> m_localNetworkAddress = {};
 	PlayerState m_player;
@@ -416,10 +424,10 @@ private:
 	float m_worldOriginY = 1040.0f;
 	float m_cameraX = 0.0f;
 	float m_cameraY = 0.0f;
-	float m_playerCollisionWidth = 16.0f;
+	float m_playerCollisionWidth = 12.0f;
 	float m_playerCollisionHeight = 32.0f;
-	float m_playerDrawWidth = 16.0f;
-	float m_playerDrawHeight = 32.0f;
+	float m_playerDrawWidth = 112.0f;
+	float m_playerDrawHeight = 112.0f;
 	float m_playerSpawnX = 0.0f;
 	float m_playerSpawnY = 0.0f;
 	float m_playerInvulnerableTimer = 0.0f;
@@ -428,6 +436,7 @@ private:
 	float m_playerKnockbackCooldownTimer = 0.0f;
 	float m_attackCooldown = 0.0f;
 	float m_attackTimer = 0.0f;
+	float m_blockPlaceRepeatTimer = 0.0f;
 	float m_frameStatsTimer = 0.0f;
 	float m_displayFps = 0.0f;
 	float m_displayFrameMs = 0.0f;
@@ -441,6 +450,8 @@ private:
 	int m_frameStatsCount = 0;
 	int m_cpuStatsCount = 0;
 	int m_networkBreakingBlockIndex = -1;
+	int m_lastPlacedTileX = -1;
+	int m_lastPlacedTileY = -1;
 	int m_playerHealth = 100;
 	int m_targetRefreshRate = 60;
 	unsigned int m_worldSeed = 0;
@@ -455,7 +466,9 @@ private:
 	bool m_gameStarted = false;
 	bool m_multiplayerMenuOpen = false;
 	bool m_startJoinHostEditing = false;
+	bool m_startNicknameEditing = false;
 	bool m_multiplayerJoinHostEditing = false;
+	bool m_multiplayerNicknameEditing = false;
 	bool m_acceptInput = false;
 	bool m_showRenderStats = false;
 	bool m_frameLimitEnabled = false;

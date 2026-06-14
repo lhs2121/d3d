@@ -450,6 +450,8 @@ void GameEngine::DrawWorld()
 	gridDesc.chunkColumns = m_blockChunkColumns;
 	gridDesc.chunkRows = m_blockChunkRows;
 	gridDesc.gridVersion = m_blockGridVersion;
+	gridDesc.atlasTileRemap = BlockAtlasTileRemap;
+	gridDesc.atlasTileRemapCount = static_cast<int>(sizeof(BlockAtlasTileRemap) / sizeof(BlockAtlasTileRemap[0]));
 
 	m_renderer->DrawBlockGrid(gridDesc);
 	DrawBlockCracks();
@@ -462,18 +464,23 @@ void GameEngine::DrawWorld()
 	const bool wantsLeft = IsKeyHeld(KeyA);
 	const bool wantsRight = IsKeyHeld(KeyD);
 	const bool isMoving = wantsLeft != wantsRight;
-	const float playerSpriteYOffset = -m_playerCollisionHeight * 0.5f + m_playerDrawHeight * 0.5f;
+	const float playerSpriteYOffset =
+		-m_playerCollisionHeight * 0.5f -
+		m_playerDrawHeight * 0.5f +
+		(PlayerSpriteFootPixelY / PlayerSpriteFramePixelHeight) * m_playerDrawHeight;
 
 	SpriteDesc playerDesc;
 	playerDesc.positionX = m_player.x - m_cameraX;
 	playerDesc.positionY = m_player.y - m_cameraY + playerSpriteYOffset;
 	playerDesc.width = m_playerDrawWidth;
 	playerDesc.height = m_playerDrawHeight;
-	playerDesc.flipX = m_player.facing > 0 ? 1 : 0;
+	playerDesc.flipX = m_player.facing < 0 ? 1 : 0;
 	playerDesc.depth = -1.0f;
-	playerDesc.textureFile = PlayerSpriteTexture;
-	playerDesc.atlasColumns = PlayerSpriteColumns;
 	playerDesc.atlasRows = PlayerSpriteRows;
+
+	const WCHAR* playerTexture = PlayerIdleTexture;
+	int playerColumns = PlayerIdleFrames;
+	int playerFrame = static_cast<int>(m_player.animationTime / 0.24f) % PlayerIdleFrames;
 	if (m_attackTimer > 0.0f)
 	{
 		const float attackProgress = 1.0f - Clamp01(m_attackTimer / PlayerAttackDuration);
@@ -481,21 +488,40 @@ void GameEngine::DrawWorld()
 		playerDesc.positionX += m_player.facing * (3.0f + lunge * 4.5f);
 		playerDesc.positionY -= lunge * 1.4f;
 		playerDesc.rotationRadians = m_player.facing * (0.035f + lunge * 0.060f);
+		playerTexture = PlayerAttackTexture;
+		playerColumns = PlayerAttackFrames;
+		playerFrame = std::clamp(static_cast<int>(attackProgress * static_cast<float>(PlayerAttackFrames)), 0, PlayerAttackFrames - 1);
 	}
-
-	if (!m_player.onGround)
+	else if (m_playerHurtFlashTimer > 0.0f)
 	{
-		playerDesc.tileIndex = PlayerJumpFrame;
+		playerTexture = PlayerHitTexture;
+		playerColumns = PlayerHitFrames;
+		playerFrame = static_cast<int>(m_player.animationTime / 0.10f) % PlayerHitFrames;
+	}
+	else if (!m_player.onGround)
+	{
+		if (m_player.velocityY < -8.0f)
+		{
+			playerTexture = PlayerFallTexture;
+			playerColumns = PlayerFallFrames;
+			playerFrame = static_cast<int>(m_player.animationTime / 0.13f) % PlayerFallFrames;
+		}
+		else
+		{
+			playerTexture = PlayerJumpTexture;
+			playerColumns = PlayerJumpFrames;
+			playerFrame = static_cast<int>(m_player.animationTime / 0.13f) % PlayerJumpFrames;
+		}
 	}
 	else if (isMoving)
 	{
-		const int frame = static_cast<int>(m_player.animationTime / 0.11f) % 4;
-		playerDesc.tileIndex = PlayerWalkFrameStart + frame;
+		playerTexture = PlayerRunTexture;
+		playerColumns = PlayerRunFrames;
+		playerFrame = static_cast<int>(m_player.animationTime / 0.11f) % PlayerRunFrames;
 	}
-	else
-	{
-		playerDesc.tileIndex = PlayerIdleFrameStart + static_cast<int>(m_player.animationTime / 0.24f) % 4;
-	}
+	playerDesc.textureFile = playerTexture;
+	playerDesc.atlasColumns = playerColumns;
+	playerDesc.tileIndex = playerFrame;
 
 	if (m_playerHurtFlashTimer > 0.0f)
 	{
@@ -508,14 +534,11 @@ void GameEngine::DrawWorld()
 	}
 
 	m_renderer->DrawSprite(playerDesc);
-	DrawPlayerAttackMotion();
-	DrawAttackArc();
 
 	if (m_renderer != nullptr)
 		m_renderer->ResetViewportRect();
 	DrawUiShell();
 	DrawInventory();
-	DrawEquipmentTooltip();
 	if (!m_minimapExpanded)
 		DrawMinimap();
 	DrawPlayerStatsPanel();
@@ -523,6 +546,7 @@ void GameEngine::DrawWorld()
 	DrawDebugLogPanel();
 	if (m_minimapExpanded)
 		DrawMinimap();
+	DrawEquipmentTooltip();
 }
 
 void GameEngine::DrawBlockCracks()
@@ -675,25 +699,29 @@ void GameEngine::DrawMonsters()
 		const float baseY = drawY + bob * 0.35f;
 		const int biome = std::clamp(static_cast<int>(monster.biome), 0, BackgroundBiomeCount - 1);
 		const bool moving = monster.idleTimer <= 0.0f || monster.contactTimer > 0.0f;
-		const int frame = moving ? static_cast<int>(monster.animationTime) % MonsterSpriteColumns : 0;
+		const MonsterVisualDesc& visual = MonsterVisuals[biome];
+		const bool hurtFrame = hurt > 0.01f && visual.hurtTexture != nullptr;
+		const WCHAR* monsterTexture = hurtFrame ? visual.hurtTexture : (moving ? visual.moveTexture : visual.idleTexture);
+		const int monsterColumns = (std::max)(1, hurtFrame ? visual.hurtFrames : (moving ? visual.moveFrames : visual.idleFrames));
+		const int frame = static_cast<int>(monster.animationTime) % monsterColumns;
 
 		SpriteDesc shadowDesc;
 		shadowDesc.textureFile = nullptr;
 		shadowDesc.positionX = drawX;
 		shadowDesc.positionY = drawY - MonsterCollisionHeight * 0.52f;
-		shadowDesc.width = 20.0f;
+		shadowDesc.width = std::clamp(visual.drawSize * 0.22f, 20.0f, 34.0f);
 		shadowDesc.height = 3.2f;
 		shadowDesc.colorA = 0.24f;
 		shadowDesc.depth = -0.86f;
 		m_renderer->DrawSprite(shadowDesc);
 
 		SpriteDesc monsterDesc;
-		monsterDesc.textureFile = MonsterSpriteTextures[biome];
+		monsterDesc.textureFile = monsterTexture;
 		monsterDesc.positionX = drawX + recoilX;
-		monsterDesc.positionY = baseY + MonsterSpriteYOffset;
-		monsterDesc.width = MonsterSpriteDrawSize;
-		monsterDesc.height = MonsterSpriteDrawSize;
-		monsterDesc.atlasColumns = MonsterSpriteColumns;
+		monsterDesc.positionY = baseY + visual.yOffset;
+		monsterDesc.width = visual.drawSize;
+		monsterDesc.height = visual.drawSize;
+		monsterDesc.atlasColumns = monsterColumns;
 		monsterDesc.atlasRows = MonsterSpriteRows;
 		monsterDesc.tileIndex = frame;
 		monsterDesc.flipX = monster.facing < 0 ? 1 : 0;
@@ -710,8 +738,8 @@ void GameEngine::DrawMonsters()
 		}
 
 		const float healthRatio = Clamp01(static_cast<float>(monster.health) / static_cast<float>((std::max)(1, monster.maxHealth)));
-		const float barWidth = 18.0f;
-		const float barY = baseY + MonsterSpriteYOffset + MonsterSpriteDrawSize * 0.46f;
+		const float barWidth = std::clamp(visual.drawSize * 0.28f, 20.0f, 34.0f);
+		const float barY = baseY + visual.yOffset + std::clamp(visual.drawSize * 0.18f, 14.0f, 24.0f);
 		DrawSolidRect(drawX, barY, barWidth, 2.4f, 0.02f, 0.02f, 0.02f, 0.80f, -0.96f);
 		DrawSolidRect(drawX - (barWidth * (1.0f - healthRatio)) * 0.5f, barY,
 			barWidth * healthRatio, 2.4f, 0.86f, 0.18f, 0.14f, 1.0f, -0.97f);
@@ -769,7 +797,7 @@ void GameEngine::DrawDroppedItems()
 		itemDesc.height = itemSize;
 		itemDesc.atlasColumns = BlockAtlasColumns;
 		itemDesc.atlasRows = BlockAtlasRows;
-		itemDesc.tileIndex = item.tileIndex;
+		itemDesc.tileIndex = GetDroppedItemTileIndex(item.tileIndex);
 		itemDesc.depth = -0.90f;
 		m_renderer->DrawSprite(itemDesc);
 	}
@@ -783,7 +811,10 @@ void GameEngine::DrawRemotePlayers()
 	const float viewHalfWidth = GetViewHalfWidth();
 	const float viewHalfHeight = GetViewHalfHeight();
 	const float cullMargin = m_tileSize * 4.0f;
-	const float playerSpriteYOffset = -m_playerCollisionHeight * 0.5f + m_playerDrawHeight * 0.5f;
+	const float playerSpriteYOffset =
+		-m_playerCollisionHeight * 0.5f -
+		m_playerDrawHeight * 0.5f +
+		(PlayerSpriteFootPixelY / PlayerSpriteFramePixelHeight) * m_playerDrawHeight;
 
 	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
 	{
@@ -812,15 +843,16 @@ void GameEngine::DrawRemotePlayers()
 		playerDesc.positionY = drawY + playerSpriteYOffset;
 		playerDesc.width = m_playerDrawWidth;
 		playerDesc.height = m_playerDrawHeight;
-		playerDesc.flipX = player.facing > 0 ? 1 : 0;
+		playerDesc.flipX = player.facing < 0 ? 1 : 0;
 		playerDesc.depth = -1.05f;
-		playerDesc.textureFile = PlayerSpriteTexture;
-		playerDesc.atlasColumns = PlayerSpriteColumns;
 		playerDesc.atlasRows = PlayerSpriteRows;
 		playerDesc.colorR = 0.72f;
 		playerDesc.colorG = 0.90f;
 		playerDesc.colorB = 1.0f;
 
+		const WCHAR* playerTexture = PlayerIdleTexture;
+		int playerColumns = PlayerIdleFrames;
+		int playerFrame = static_cast<int>(player.animationTime / 0.24f) % PlayerIdleFrames;
 		if (remotePlayer.attackTimer > 0.0f)
 		{
 			const float attackProgress = 1.0f - Clamp01(remotePlayer.attackTimer / PlayerAttackDuration);
@@ -828,21 +860,34 @@ void GameEngine::DrawRemotePlayers()
 			playerDesc.positionX += player.facing * (3.0f + lunge * 4.5f);
 			playerDesc.positionY -= lunge * 1.4f;
 			playerDesc.rotationRadians = player.facing * (0.035f + lunge * 0.060f);
+			playerTexture = PlayerAttackTexture;
+			playerColumns = PlayerAttackFrames;
+			playerFrame = std::clamp(static_cast<int>(attackProgress * static_cast<float>(PlayerAttackFrames)), 0, PlayerAttackFrames - 1);
 		}
-
-		if (!player.onGround)
+		else if (!player.onGround)
 		{
-			playerDesc.tileIndex = PlayerJumpFrame;
+			if (player.velocityY < -8.0f)
+			{
+				playerTexture = PlayerFallTexture;
+				playerColumns = PlayerFallFrames;
+				playerFrame = static_cast<int>(player.animationTime / 0.13f) % PlayerFallFrames;
+			}
+			else
+			{
+				playerTexture = PlayerJumpTexture;
+				playerColumns = PlayerJumpFrames;
+				playerFrame = static_cast<int>(player.animationTime / 0.13f) % PlayerJumpFrames;
+			}
 		}
 		else if (std::fabs(player.velocityX) > 1.0f)
 		{
-			const int frame = static_cast<int>(player.animationTime / 0.11f) % 4;
-			playerDesc.tileIndex = PlayerWalkFrameStart + frame;
+			playerTexture = PlayerRunTexture;
+			playerColumns = PlayerRunFrames;
+			playerFrame = static_cast<int>(player.animationTime / 0.11f) % PlayerRunFrames;
 		}
-		else
-		{
-			playerDesc.tileIndex = PlayerIdleFrameStart + static_cast<int>(player.animationTime / 0.24f) % 4;
-		}
+		playerDesc.textureFile = playerTexture;
+		playerDesc.atlasColumns = playerColumns;
+		playerDesc.tileIndex = playerFrame;
 
 		m_renderer->DrawSprite(playerDesc);
 
@@ -852,9 +897,17 @@ void GameEngine::DrawRemotePlayers()
 		DrawSolidRect(drawX - 11.0f + 11.0f * healthRatio, barY,
 			22.0f * healthRatio, 2.0f, 0.18f, 0.70f, 0.95f, 1.0f, -1.18f);
 
-		char label[16] = {};
-		std::snprintf(label, sizeof(label), "친%d", remotePlayer.id);
-		DrawText(drawX - 8.0f, drawY + 38.0f, label, 1.45f, 0.70f, 0.92f, 1.0f, 0.92f, -1.22f);
+		char fallbackLabel[16] = {};
+		const char* label = remotePlayer.nickname[0] != '\0' ? remotePlayer.nickname.data() : nullptr;
+		if (label == nullptr)
+		{
+			std::snprintf(fallbackLabel, sizeof(fallbackLabel), "P%d", remotePlayer.id);
+			label = fallbackLabel;
+		}
+		const float labelSize = 1.25f;
+		const float labelX = drawX - GetUiTextWidth(label, labelSize) * 0.5f;
+		DrawText(labelX + 1.0f, drawY + 37.0f, label, labelSize, 0.02f, 0.02f, 0.02f, 0.75f, -1.20f);
+		DrawText(labelX, drawY + 38.0f, label, labelSize, 1.0f, 1.0f, 1.0f, 0.92f, -1.24f);
 	}
 }
 
@@ -1001,7 +1054,7 @@ void GameEngine::DrawAttackArc()
 void GameEngine::DrawInventory()
 {
 	const UiRect panel = GetInventoryPanelRect();
-	DrawUiPanel(panel, nullptr);
+	DrawUiPanel(panel, "inventory");
 
 	const int columns = 10;
 	const int rows = (InventorySlotCount + columns - 1) / columns;
@@ -1026,32 +1079,23 @@ void GameEngine::DrawInventory()
 		const bool selected = slot == m_selectedInventorySlot;
 		const bool hovered = slot == hoveredSlot;
 
-		const float bevel = std::clamp(slotSize * 0.085f, 2.0f, 3.4f);
-		const float innerSize = (std::max)(2.0f, slotSize - bevel * 1.7f);
-		const float innerOffset = bevel * 0.22f;
-		const float fillR = selected ? 0.150f : (hovered ? 0.132f : 0.110f);
-		const float fillG = selected ? 0.174f : (hovered ? 0.130f : 0.108f);
-		const float fillB = selected ? 0.128f : (hovered ? 0.158f : 0.138f);
-		const float fillA = selected ? 0.90f : (hovered ? 0.86f : 0.78f);
-		const float lightR = selected ? 0.78f : (hovered ? 0.70f : 0.60f);
-		const float lightG = selected ? 0.88f : (hovered ? 0.68f : 0.58f);
-		const float lightB = selected ? 0.72f : (hovered ? 0.78f : 0.68f);
-		const float lightA = selected ? 0.95f : (hovered ? 0.82f : 0.68f);
+		const float fillR = selected ? 0.42f : (hovered ? 0.22f : UiThemeBodyDarkR);
+		const float fillG = selected ? 0.18f : (hovered ? 0.24f : UiThemeBodyDarkG);
+		const float fillB = selected ? 0.05f : (hovered ? 0.26f : UiThemeBodyDarkB);
+		const float fillA = selected ? 0.94f : (hovered ? 0.86f : 0.80f);
 
 		DrawSolidRect(slotX, slotY, slotSize, slotSize,
-			0.030f, 0.028f, 0.040f, selected ? 0.92f : 0.82f, -6.55f);
-		DrawSolidRect(slotX + innerOffset, slotY - innerOffset, innerSize, innerSize,
+			UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, selected ? 0.92f : 0.56f, -6.55f);
+		DrawSolidRect(slotX, slotY, slotSize - 2.0f, slotSize - 2.0f,
 			fillR, fillG, fillB, fillA, -6.65f);
-		DrawSolidRect(slotX, slotY + slotSize * 0.5f - bevel * 0.5f, slotSize, bevel,
-			0.025f, 0.024f, 0.036f, 0.95f, -6.85f);
-		DrawSolidRect(slotX - slotSize * 0.5f + bevel * 0.5f, slotY, bevel, slotSize,
-			0.025f, 0.024f, 0.036f, 0.94f, -6.86f);
-		DrawSolidRect(slotX + bevel * 0.20f, slotY - slotSize * 0.5f + bevel * 0.5f,
-			slotSize - bevel * 1.15f, bevel, lightR, lightG, lightB, lightA, -6.95f);
-		DrawSolidRect(slotX + slotSize * 0.5f - bevel * 0.5f, slotY - bevel * 0.18f,
-			bevel, slotSize - bevel * 1.15f, lightR, lightG, lightB, lightA * 0.88f, -6.96f);
-		DrawSolidRect(slotX + innerOffset, slotY + slotSize * 0.32f, innerSize - bevel * 1.2f, 1.0f,
-			0.030f, 0.028f, 0.040f, 0.58f, -6.98f);
+		DrawSolidRect(slotX - slotSize * 0.5f + 0.5f, slotY, 1.0f, slotSize,
+			UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.78f, -6.75f);
+		DrawSolidRect(slotX, slotY + slotSize * 0.5f - 0.5f, slotSize, 1.0f,
+			UiThemeShadowR, UiThemeShadowG, UiThemeShadowB, 0.78f, -6.76f);
+		DrawSolidRect(slotX + slotSize * 0.5f - 0.5f, slotY, 1.0f, slotSize,
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, hovered || selected ? 0.66f : 0.28f, -6.77f);
+		DrawSolidRect(slotX, slotY - slotSize * 0.5f + 0.5f, slotSize, 1.0f,
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, hovered || selected ? 0.60f : 0.24f, -6.78f);
 
 		if (selected)
 		{
@@ -1061,9 +1105,9 @@ void GameEngine::DrawInventory()
 			selectionDesc.width = slotSize - 1.0f;
 			selectionDesc.height = slotSize - 1.0f;
 			selectionDesc.thickness = 1.2f;
-			selectionDesc.colorR = 0.82f;
-			selectionDesc.colorG = 0.88f;
-			selectionDesc.colorB = 0.74f;
+			selectionDesc.colorR = 0.96f;
+			selectionDesc.colorG = 0.86f;
+			selectionDesc.colorB = 0.70f;
 			selectionDesc.colorA = 0.82f;
 			selectionDesc.depth = -7.05f;
 			m_renderer->DrawRectOutline(selectionDesc);
@@ -1109,7 +1153,7 @@ void GameEngine::DrawInventory()
 		char countText[8] = {};
 		std::snprintf(countText, sizeof(countText), "%d", m_inventoryCounts[slot]);
 		DrawUiText(slotX - slotSize * 0.42f, slotY - slotSize * 0.28f, countText, 1.10f,
-			0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
+			UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
 	}
 
 }
@@ -1208,14 +1252,15 @@ void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float 
 void GameEngine::DrawMinimap()
 {
 	const bool expanded = m_minimapExpanded;
-	const int sampleStep = expanded ? 1 : 3;
+	const UiRect panel = GetRightPanelRect(0);
+	const bool compactPanelHasRoom = panel.width >= 150.0f && panel.height >= 72.0f;
+	const int sampleStep = expanded ? 1 : (compactPanelHasRoom ? 2 : 3);
 	const int centerTileX = std::clamp(WorldToTileX(m_cameraX), 0, m_blockWidth - 1);
 	const int centerTileY = std::clamp(WorldToTileY(m_cameraY), 0, m_blockHeight - 1);
 	int startTileX = 0;
 	int endTileX = m_blockWidth - 1;
 	int startTileY = 0;
 	int endTileY = m_blockHeight - 1;
-	const UiRect panel = GetRightPanelRect(0);
 
 	if (!expanded)
 	{
@@ -1261,7 +1306,7 @@ void GameEngine::DrawMinimap()
 	}
 	else
 	{
-		DrawClassicUiPanel(panel, nullptr);
+		DrawClassicUiPanel(panel, "map");
 	}
 
 	if (expanded)
@@ -1293,6 +1338,7 @@ void GameEngine::DrawMinimap()
 			colorR = 0.82f; colorG = 0.68f; colorB = 0.32f;
 			break;
 		case BlockWood:
+		case BlockPlacedWood:
 			colorR = 0.44f; colorG = 0.25f; colorB = 0.11f;
 			break;
 		case BlockLeaves:
@@ -1466,9 +1512,9 @@ void GameEngine::DrawMinimap()
 		outlineDesc.width = mapWidth + 8.0f;
 		outlineDesc.height = mapHeight + 8.0f;
 		outlineDesc.thickness = 1.5f;
-		outlineDesc.colorR = 0.42f;
-		outlineDesc.colorG = 0.45f;
-		outlineDesc.colorB = 0.48f;
+		outlineDesc.colorR = UiThemeCreamR;
+		outlineDesc.colorG = UiThemeCreamG;
+		outlineDesc.colorB = UiThemeCreamB;
 		outlineDesc.colorA = 0.8f;
 		outlineDesc.depth = mapOutlineDepth;
 		m_renderer->DrawRectOutline(outlineDesc);
@@ -1484,10 +1530,11 @@ void GameEngine::DrawPlayerStatus()
 
 	char hpText[24] = {};
 	std::snprintf(hpText, sizeof(hpText), "체력 %d/%d", m_playerHealth, GetPlayerMaxHealth());
-	DrawUiText(x, y, hpText, 1.35f, 0.90f, 0.86f, 0.78f, 1.0f, -8.0f);
-	DrawSolidRect(x + 67.0f, y - 16.0f, 122.0f, 7.0f, 0.035f, 0.025f, 0.025f, 0.92f, -7.0f);
+	DrawUiText(x, y, hpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+	DrawSolidRect(x + 67.0f, y - 16.0f, 122.0f, 7.0f,
+		UiThemeBodyDarkR, UiThemeBodyDarkG, UiThemeBodyDarkB, 0.92f, -7.0f);
 	DrawSolidRect(x + 6.0f + 122.0f * healthRatio * 0.5f, y - 16.0f,
-		122.0f * healthRatio, 5.0f, 0.64f, 0.90f, 0.32f, 1.0f, -8.0f);
+		122.0f * healthRatio, 5.0f, 0.72f, 0.80f, 0.45f, 1.0f, -8.0f);
 }
 
 void GameEngine::DrawNetworkStatus()
@@ -1495,28 +1542,23 @@ void GameEngine::DrawNetworkStatus()
 	if (m_networkMode == NetworkConfig::Mode::SinglePlayer)
 		return;
 
-	int remoteCount = 0;
-	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
-	{
-		if (remotePlayer.active)
-			++remoteCount;
-	}
-
-	char statusText[48] = {};
+	char peerText[80] = {};
+	BuildNetworkPeerListText(peerText, sizeof(peerText));
+	char statusText[128] = {};
 	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
 		std::snprintf(statusText, sizeof(statusText), "통신 참가 대기");
 	else
-		std::snprintf(statusText, sizeof(statusText), "통신 %s 나%d 친구%d", GetNetworkModeText(), m_localPlayerId, remoteCount);
+		std::snprintf(statusText, sizeof(statusText), "통신 %s %s / %s", GetNetworkModeText(), GetLocalNickname(), peerText);
 
 	const UiRect panel = GetRightPanelRect(0);
 	DrawUiText(panel.left + 12.0f, panel.top - 50.0f, statusText, 1.20f,
-		0.62f, 0.88f, 1.0f, 0.96f, -8.0f);
+		0.76f, 0.70f, 0.64f, 0.96f, -8.0f);
 }
 
 void GameEngine::DrawPlayerStatsPanel()
 {
 	const UiRect panel = GetRightPanelRect(2);
-	DrawUiPanel(panel, nullptr);
+	DrawUiPanel(panel, "status");
 	const float left = panel.left;
 	const float top = panel.top;
 	const float contentTop = top - 13.0f;
@@ -1545,13 +1587,13 @@ void GameEngine::DrawPlayerStatsPanel()
 	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", GetSelectedChopSpeedMultiplier());
 	std::snprintf(gearText, sizeof(gearText), "장비 %s", equipment.name);
 
-	drawPanelText(left + 12.0f, contentTop, hpText, 1.35f, 0.86f, 0.92f, 0.80f);
-	drawPanelText(left + 12.0f, contentTop - 18.0f, attackText, 1.35f, 0.82f, 0.88f, 0.76f);
-	drawPanelText(left + 96.0f, contentTop - 18.0f, defenseText, 1.35f, 0.82f, 0.88f, 0.76f);
-	drawPanelText(left + 12.0f, contentTop - 36.0f, speedText, 1.35f, 0.76f, 0.84f, 0.72f);
-	drawPanelText(left + 96.0f, contentTop - 36.0f, jumpText, 1.35f, 0.76f, 0.84f, 0.72f);
-	drawPanelText(left + 12.0f, contentTop - 54.0f, chopText, 1.35f, 0.76f, 0.84f, 0.72f);
-	drawPanelText(left + 12.0f, contentTop - 73.0f, gearText, 1.30f, 0.86f, 0.92f, 0.80f);
+	drawPanelText(left + 12.0f, contentTop, hpText, 1.35f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawPanelText(left + 12.0f, contentTop - 18.0f, attackText, 1.35f, 0.80f, 0.72f, 0.64f);
+	drawPanelText(left + 96.0f, contentTop - 18.0f, defenseText, 1.35f, 0.80f, 0.72f, 0.64f);
+	drawPanelText(left + 12.0f, contentTop - 36.0f, speedText, 1.35f, 0.74f, 0.68f, 0.62f);
+	drawPanelText(left + 96.0f, contentTop - 36.0f, jumpText, 1.35f, 0.74f, 0.68f, 0.62f);
+	drawPanelText(left + 12.0f, contentTop - 54.0f, chopText, 1.35f, 0.74f, 0.68f, 0.62f);
+	drawPanelText(left + 12.0f, contentTop - 73.0f, gearText, 1.30f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
 }
 
 void GameEngine::DrawEquipmentTooltip()
@@ -1585,29 +1627,31 @@ void GameEngine::DrawEquipmentTooltip()
 	const float centerX = left + panelWidth * 0.5f;
 	const float centerY = top - panelHeight * 0.5f;
 	const bool owned = m_inventoryCounts[slot] > 0;
-	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, panelWidth, panelHeight,
-		0.0f, 0.0f, 0.0f, 0.38f, -7.0f);
-	DrawSolidRect(centerX, centerY, panelWidth, panelHeight,
-		0.045f, 0.032f, 0.060f, 0.96f, -7.3f);
+	constexpr float tooltipIconDepth = -11.8f;
+	constexpr float tooltipTextShadowDepth = -11.9f;
+	constexpr float tooltipTextDepth = -12.2f;
 
-	RectOutlineDesc outline;
-	outline.positionX = centerX;
-	outline.positionY = centerY;
-	outline.width = panelWidth;
-	outline.height = panelHeight;
-	outline.thickness = 1.8f;
-	outline.colorR = owned ? 0.82f : 0.42f;
-	outline.colorG = owned ? 0.88f : 0.48f;
-	outline.colorB = owned ? 0.78f : 0.42f;
-	outline.colorA = 0.96f;
-	outline.depth = -8.0f;
-	m_renderer->DrawRectOutline(outline);
+	SpriteDesc tooltipDesc;
+	tooltipDesc.textureFile = GetUiPanelTextureFile("tooltip");
+	tooltipDesc.positionX = centerX;
+	tooltipDesc.positionY = centerY;
+	tooltipDesc.width = panelWidth + 4.0f;
+	tooltipDesc.height = panelHeight + 4.0f;
+	tooltipDesc.colorR = 1.0f;
+	tooltipDesc.colorG = 1.0f;
+	tooltipDesc.colorB = 1.0f;
+	tooltipDesc.colorA = owned ? 1.0f : 0.78f;
+	tooltipDesc.depth = -11.2f;
+	m_renderer->DrawSprite(tooltipDesc);
 
-	auto drawTipText = [this](float x, float y, const char* text, float size,
+	auto drawTipText = [this, tooltipTextShadowDepth, tooltipTextDepth](float x, float y, const char* text, float size,
 		float colorR, float colorG, float colorB)
 	{
-		DrawText(x + 1.0f, y - 1.0f, text, size, 0.0f, 0.0f, 0.0f, 0.76f, -8.1f);
-		DrawText(x, y, text, size, colorR, colorG, colorB, 1.0f, -8.5f);
+		(void)colorR;
+		(void)colorG;
+		(void)colorB;
+		DrawText(x + 1.0f, y - 1.0f, text, size, 0.0f, 0.0f, 0.0f, 0.76f, tooltipTextShadowDepth);
+		DrawText(x, y, text, size, 1.0f, 1.0f, 1.0f, 1.0f, tooltipTextDepth);
 	};
 
 	char attackText[32] = {};
@@ -1617,21 +1661,21 @@ void GameEngine::DrawEquipmentTooltip()
 	std::snprintf(defenseText, sizeof(defenseText), "방어 +%d", stats.defenseBonus);
 	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", stats.chopSpeedMultiplier);
 
-	DrawWeaponIcon(left + 21.0f, top - 25.0f, 30.0f, -8.3f, owned ? 1.0f : 0.34f, slot);
+	DrawWeaponIcon(left + 21.0f, top - 25.0f, 30.0f, tooltipIconDepth, owned ? 1.0f : 0.34f, slot);
 	drawTipText(left + 43.0f, top - 14.0f, stats.name, 1.9f,
-		owned ? 0.86f : 0.50f, owned ? 0.92f : 0.54f, owned ? 0.80f : 0.50f);
+		owned ? UiThemeCreamR : UiThemeMutedR, owned ? UiThemeCreamG : UiThemeMutedG, owned ? UiThemeCreamB : UiThemeMutedB);
 	drawTipText(left + 43.0f, top - 32.0f, owned ? "사용 가능" : "없음", 1.35f,
-		owned ? 0.72f : 0.56f, owned ? 0.82f : 0.58f, owned ? 0.68f : 0.54f);
-	drawTipText(left + 12.0f, top - 53.0f, attackText, 1.45f, 0.82f, 0.88f, 0.76f);
-	drawTipText(left + 12.0f, top - 68.0f, defenseText, 1.45f, 0.82f, 0.88f, 0.76f);
-	drawTipText(left + 12.0f, top - 83.0f, chopText, 1.45f, 0.72f, 0.82f, 0.68f);
-	drawTipText(left + 93.0f, top - 83.0f, stats.role, 1.25f, 0.72f, 0.78f, 0.66f);
+		owned ? 0.76f : 0.56f, owned ? 0.70f : 0.52f, owned ? 0.64f : 0.50f);
+	drawTipText(left + 12.0f, top - 53.0f, attackText, 1.45f, 0.80f, 0.72f, 0.64f);
+	drawTipText(left + 12.0f, top - 68.0f, defenseText, 1.45f, 0.80f, 0.72f, 0.64f);
+	drawTipText(left + 12.0f, top - 83.0f, chopText, 1.45f, 0.74f, 0.68f, 0.62f);
+	drawTipText(left + 93.0f, top - 83.0f, stats.role, 1.25f, 0.70f, 0.64f, 0.58f);
 }
 
 void GameEngine::DrawCraftingPanel()
 {
 	const UiRect panel = GetRightPanelRect(1);
-	DrawUiPanel(panel, nullptr);
+	DrawUiPanel(panel, "craft");
 	const CraftingPanelLayout layout = GetCraftingPanelLayout();
 	ClampCraftingScrollOffset();
 
@@ -1647,85 +1691,79 @@ void GameEngine::DrawCraftingPanel()
 
 	struct CraftingRow
 	{
-		const char* name;
-		int slot;
-		int woodCost;
-		int stoneCost;
+		const char* action;
 		bool craftable;
 	};
 
 	auto getRow = [this](int recipeIndex)
 	{
 		if (recipeIndex == 1)
-			return CraftingRow{ "검", SlotSword, 2, 3, CanCraftSword() };
+			return CraftingRow{ "검 제작", CanCraftSword() };
 		if (recipeIndex == 2)
-			return CraftingRow{ "도끼", SlotAxe, 3, 2, CanCraftAxe() };
-		return CraftingRow{ "작업대", SlotCraftingTable, 4, 0, CanCraftTable() };
+			return CraftingRow{ "도끼 제작", CanCraftAxe() };
+		return CraftingRow{ "작업대 제작", CanCraftTable() };
 	};
 
 	const int recipeCount = GetCraftingRecipeCount();
 	const int visibleRows = GetVisibleCraftingRecipeRows();
 	const int firstRecipe = m_craftingScrollOffset;
 	const int lastRecipe = (std::min)(recipeCount, firstRecipe + visibleRows);
+	const bool canScroll = recipeCount > visibleRows;
+	const float scrollbarWidth = 8.0f;
+	const float listWidth = layout.width - scrollbarWidth;
 	for (int recipe = firstRecipe; recipe < lastRecipe; ++recipe)
 	{
 		const CraftingRow row = getRow(recipe);
 		const int visibleIndex = recipe - firstRecipe;
-		const float rowCenterX = layout.left + layout.width * 0.5f;
-		const float rowCenterY = layout.firstRowCenterY - visibleIndex * (layout.rowHeight + 2.0f);
-		const bool active = row.craftable;
+		const float rowCenterX = layout.left + listWidth * 0.5f;
+		const float rowCenterY = layout.firstRowCenterY - visibleIndex * layout.rowHeight;
 		const bool hovered = hoveredRecipe == recipe;
 
-		DrawSolidRect(rowCenterX, rowCenterY, layout.width - 18.0f, layout.rowHeight,
-			hovered ? 0.105f : 0.060f,
-			hovered ? 0.130f : 0.070f,
-			hovered ? 0.095f : 0.075f,
-			hovered ? 0.88f : 0.42f,
+		DrawSolidRect(rowCenterX, rowCenterY, listWidth, layout.rowHeight,
+			hovered ? 0.42f : UiThemeBodyDarkR,
+			hovered ? 0.18f : UiThemeBodyDarkG,
+			hovered ? 0.05f : UiThemeBodyDarkB,
+			hovered ? 0.92f : 0.18f,
 			-6.8f);
-
-		RectOutlineDesc rowOutline;
-		rowOutline.positionX = rowCenterX;
-		rowOutline.positionY = rowCenterY;
-		rowOutline.width = layout.width - 18.0f;
-		rowOutline.height = layout.rowHeight;
-		rowOutline.thickness = hovered ? 1.2f : 0.7f;
-		rowOutline.colorR = active ? 0.78f : 0.38f;
-		rowOutline.colorG = active ? 0.86f : 0.44f;
-		rowOutline.colorB = active ? 0.74f : 0.40f;
-		rowOutline.colorA = hovered ? 0.96f : 0.46f;
-		rowOutline.depth = -7.3f;
-		m_renderer->DrawRectOutline(rowOutline);
-
-		char costText[48] = {};
-		if (row.stoneCost > 0)
-			std::snprintf(costText, sizeof(costText), "%s  나무 %d  돌 %d", row.name, row.woodCost, row.stoneCost);
-		else
-			std::snprintf(costText, sizeof(costText), "%s  나무 %d", row.name, row.woodCost);
-		drawPanelText(layout.left + 10.0f, rowCenterY + 5.0f, costText, 1.20f,
-			active ? 0.82f : 0.48f,
-			active ? 0.90f : 0.52f,
-			active ? 0.76f : 0.48f,
+		DrawSolidRect(rowCenterX, rowCenterY - layout.rowHeight * 0.5f + 0.5f, listWidth, 1.0f,
+			UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 0.62f, -7.1f);
+		drawPanelText(layout.left + 5.0f, rowCenterY + 2.0f, row.action, 1.14f,
+			1.0f,
+			1.0f,
+			1.0f,
 			-8.0f);
 	}
 
-	if (recipeCount > visibleRows)
+	const float trackWidth = scrollbarWidth;
+	const float trackHeight = layout.height;
+	const float trackX = layout.left + layout.width - trackWidth * 0.5f;
+	const float trackCenterY = layout.top - layout.height * 0.5f;
+	DrawSolidRect(trackX, trackCenterY, trackWidth, trackHeight,
+		UiThemeBodyDarkR, UiThemeBodyDarkG, UiThemeBodyDarkB, 0.92f, -7.0f);
+	DrawSolidRect(layout.left + listWidth + 0.5f, trackCenterY, 1.0f, trackHeight,
+		UiThemeMutedR, UiThemeMutedG, UiThemeMutedB, 0.74f, -7.2f);
+
+	const float thumbHeight = canScroll
+		? (std::max)(18.0f, trackHeight * (static_cast<float>(visibleRows) / static_cast<float>(recipeCount)))
+		: trackHeight;
+	const float scrollRange = (std::max)(0.0f, trackHeight - thumbHeight);
+	const float scrollT = canScroll
+		? static_cast<float>(m_craftingScrollOffset) / static_cast<float>(GetMaxCraftingScrollOffset())
+		: 0.0f;
+	const float thumbCenterY = layout.top - thumbHeight * 0.5f - scrollRange * scrollT;
+	DrawSolidRect(trackX, thumbCenterY, trackWidth - 2.0f, thumbHeight,
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, canScroll ? 0.88f : 0.38f, -7.8f);
+	if (!canScroll)
 	{
-		const float trackHeight = layout.height - 20.0f;
-		const float trackX = layout.left + layout.width - 7.0f;
-		const float trackCenterY = layout.top - layout.height * 0.5f - 2.0f;
-		DrawSolidRect(trackX, trackCenterY, 3.0f, trackHeight, 0.070f, 0.080f, 0.075f, 0.86f, -7.2f);
-		const float thumbHeight = (std::max)(18.0f, trackHeight * (static_cast<float>(visibleRows) / static_cast<float>(recipeCount)));
-		const float scrollRange = (std::max)(1.0f, trackHeight - thumbHeight);
-		const float scrollT = static_cast<float>(m_craftingScrollOffset) / static_cast<float>(GetMaxCraftingScrollOffset());
-		const float thumbCenterY = layout.top - 10.0f - thumbHeight * 0.5f - scrollRange * scrollT;
-		DrawSolidRect(trackX, thumbCenterY, 5.0f, thumbHeight, 0.78f, 0.86f, 0.74f, 0.92f, -7.8f);
+		DrawSolidRect(trackX, trackCenterY, 2.0f, trackHeight - 4.0f,
+			UiThemeBodyDarkR, UiThemeBodyDarkG, UiThemeBodyDarkB, 0.44f, -8.0f);
 	}
 }
 
 void GameEngine::DrawDebugLogPanel()
 {
 	const UiRect panel = GetLogPanelRect();
-	DrawUiPanel(panel, nullptr);
+	DrawUiPanel(panel, m_showRenderStats ? "performance" : "log");
 	const float x = panel.left + 12.0f;
 	const float y = panel.top - 13.0f;
 	const float maxTextWidth = (std::max)(24.0f, panel.width - 24.0f);
@@ -1739,9 +1777,9 @@ void GameEngine::DrawDebugLogPanel()
 	std::snprintf(capText, sizeof(capText), m_frameLimitEnabled ? "제한 %03d" : "제한 끔", m_targetRefreshRate);
 	const float frameTextX = x + (std::max)(132.0f, GetUiTextWidth(fpsText, 1.32f) + 28.0f);
 	const float capTextX = frameTextX + (std::max)(118.0f, GetUiTextWidth(frameText, 1.20f) + 30.0f);
-	DrawUiText(x, y, fpsText, 1.32f, 0.86f, 0.92f, 0.80f, 1.0f, -8.0f);
-	DrawUiText(frameTextX, y, frameText, 1.20f, 0.82f, 0.88f, 0.76f, 1.0f, -8.0f);
-	DrawUiText(capTextX, y, capText, 1.16f, 0.72f, 0.80f, 0.68f, 1.0f, -8.0f);
+	DrawUiText(x, y, fpsText, 1.32f, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+	DrawUiText(frameTextX, y, frameText, 1.20f, 0.80f, 0.72f, 0.64f, 1.0f, -8.0f);
+	DrawUiText(capTextX, y, capText, 1.16f, 0.70f, 0.64f, 0.58f, 1.0f, -8.0f);
 
 	float cursorX = 0.0f;
 	float cursorY = 0.0f;
@@ -1756,9 +1794,9 @@ void GameEngine::DrawDebugLogPanel()
 	{
 		const bool hovered = hasCursor && IsPointInsideRect(cursorX, cursorY, centerX, buttonY, width, buttonHeight);
 		DrawSolidRect(centerX, buttonY, width, buttonHeight,
-			hovered ? 0.78f : 0.060f,
-			hovered ? 0.86f : 0.070f,
-			hovered ? 0.74f : 0.070f,
+			hovered ? 0.42f : UiThemeBodyDarkR,
+			hovered ? 0.18f : UiThemeBodyDarkG,
+			hovered ? 0.05f : UiThemeBodyDarkB,
 			0.94f, -8.5f);
 
 		RectOutlineDesc outline;
@@ -1767,17 +1805,17 @@ void GameEngine::DrawDebugLogPanel()
 		outline.width = width;
 		outline.height = buttonHeight;
 		outline.thickness = hovered ? 1.8f : 1.1f;
-		outline.colorR = 0.78f;
-		outline.colorG = 0.86f;
-		outline.colorB = 0.74f;
+		outline.colorR = UiThemeCreamR;
+		outline.colorG = UiThemeCreamG;
+		outline.colorB = UiThemeCreamB;
 		outline.colorA = 0.92f;
 		outline.depth = -8.9f;
 		m_renderer->DrawRectOutline(outline);
 
 		DrawCenteredUiText(centerX, buttonY + 4.5f, text, 1.02f,
-			hovered ? 0.055f : 0.84f,
-			hovered ? 0.050f : 0.90f,
-			hovered ? 0.070f : 0.80f,
+			hovered ? UiThemeBodyDarkR : UiThemeCreamR,
+			hovered ? UiThemeBodyDarkG : UiThemeCreamG,
+			hovered ? UiThemeBodyDarkB : UiThemeCreamB,
 			1.0f, -9.1f);
 	};
 
@@ -1809,9 +1847,9 @@ void GameEngine::DrawDebugLogPanel()
 			if (lineY < minLineY)
 				return;
 
-			DrawUiText(leftX, lineY, leftText, 0.84f, 0.72f, 0.82f, 0.68f, 1.0f, -8.0f);
+			DrawUiText(leftX, lineY, leftText, 0.84f, 0.72f, 0.66f, 0.60f, 1.0f, -8.0f);
 			if (rightText != nullptr && rightText[0] != '\0')
-				DrawUiText(rightX, lineY, rightText, 0.84f, 0.72f, 0.82f, 0.68f, 1.0f, -8.0f);
+				DrawUiText(rightX, lineY, rightText, 0.84f, 0.72f, 0.66f, 0.60f, 1.0f, -8.0f);
 			lineY -= 11.5f;
 		};
 
@@ -1892,25 +1930,20 @@ void GameEngine::DrawDebugLogPanel()
 
 	if (text != nullptr && text[0] != '\0')
 	{
-		drawLine(text, 0.86f, 0.92f, 0.80f);
+		drawLine(text, UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
 	}
 	else
 	{
 		if (m_networkMode != NetworkConfig::Mode::SinglePlayer)
 		{
-			int remoteCount = 0;
-			for (const RemotePlayerState& remotePlayer : m_remotePlayers)
-			{
-				if (remotePlayer.active)
-					++remoteCount;
-			}
-
-			char networkText[48] = {};
+			char peerText[80] = {};
+			BuildNetworkPeerListText(peerText, sizeof(peerText));
+			char networkText[128] = {};
 			if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
 				std::snprintf(networkText, sizeof(networkText), "통신 참가 대기");
 			else
-				std::snprintf(networkText, sizeof(networkText), "통신 %s 나%d 친구 %d", GetNetworkModeText(), m_localPlayerId, remoteCount);
-			drawLine(networkText, 0.72f, 0.82f, 0.68f);
+				std::snprintf(networkText, sizeof(networkText), "통신 %s %s / %s", GetNetworkModeText(), GetLocalNickname(), peerText);
+			drawLine(networkText, 0.72f, 0.66f, 0.60f);
 		}
 	}
 
@@ -1926,118 +1959,70 @@ void GameEngine::DrawDebugLogPanel()
 		m_selectedInventorySlot + 1,
 		selectedName,
 		m_inventoryCounts[m_selectedInventorySlot]);
-	drawLine(selectedText, 0.70f, 0.78f, 0.66f);
+	drawLine(selectedText, 0.70f, 0.64f, 0.58f);
 }
 
 void GameEngine::DrawUiShell()
 {
 	const UiRect game = GetGameViewportRect();
 
-	RectOutlineDesc outer;
-	outer.positionX = game.left + game.width * 0.5f;
-	outer.positionY = game.top - game.height * 0.5f;
-	outer.width = game.width + 3.0f;
-	outer.height = game.height + 3.0f;
-	outer.thickness = 2.0f;
-	outer.colorR = 0.82f;
-	outer.colorG = 0.88f;
-	outer.colorB = 0.78f;
-	outer.colorA = 0.95f;
-	outer.depth = -9.3f;
-	m_renderer->DrawRectOutline(outer);
-
-	RectOutlineDesc inner = outer;
-	inner.width = game.width - 2.0f;
-	inner.height = game.height - 2.0f;
-	inner.thickness = 1.0f;
-	inner.colorR = 0.42f;
-	inner.colorG = 0.48f;
-	inner.colorB = 0.42f;
-	inner.colorA = 0.90f;
-	inner.depth = -9.6f;
-	m_renderer->DrawRectOutline(inner);
+	SpriteDesc frameDesc;
+	frameDesc.textureFile = GetUiPanelTextureFile("game");
+	frameDesc.positionX = game.left + game.width * 0.5f;
+	frameDesc.positionY = game.top - game.height * 0.5f;
+	frameDesc.width = game.width + 8.0f;
+	frameDesc.height = game.height + 8.0f;
+	frameDesc.colorR = 1.0f;
+	frameDesc.colorG = 1.0f;
+	frameDesc.colorB = 1.0f;
+	frameDesc.colorA = 1.0f;
+	frameDesc.depth = -9.3f;
+	m_renderer->DrawSprite(frameDesc);
 }
 
 void GameEngine::DrawUiPanel(const UiRect& rect, const char* title, float depth)
 {
-	(void)title;
 	if (rect.width <= 0.0f || rect.height <= 0.0f)
 		return;
 
 	const float centerX = rect.left + rect.width * 0.5f;
 	const float centerY = rect.top - rect.height * 0.5f;
-	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, rect.width, rect.height,
-		0.0f, 0.0f, 0.0f, 0.32f, depth + 0.25f);
-	DrawSolidRect(centerX, centerY, rect.width, rect.height,
-		0.045f, 0.032f, 0.060f, 0.98f, depth);
+	SpriteDesc panelDesc;
+	panelDesc.textureFile = GetUiPanelTextureFile(title);
+	panelDesc.positionX = centerX;
+	panelDesc.positionY = centerY;
+	panelDesc.width = rect.width + 4.0f;
+	panelDesc.height = rect.height + 4.0f;
+	panelDesc.colorR = 1.0f;
+	panelDesc.colorG = 1.0f;
+	panelDesc.colorB = 1.0f;
+	panelDesc.colorA = 1.0f;
+	panelDesc.depth = depth + 0.20f;
+	m_renderer->DrawSprite(panelDesc);
 
-	RectOutlineDesc outline;
-	outline.positionX = centerX;
-	outline.positionY = centerY;
-	outline.width = rect.width;
-	outline.height = rect.height;
-	outline.thickness = 1.6f;
-	outline.colorR = 0.82f;
-	outline.colorG = 0.88f;
-	outline.colorB = 0.78f;
-	outline.colorA = 0.98f;
-	outline.depth = depth - 0.9f;
-	m_renderer->DrawRectOutline(outline);
-
-	RectOutlineDesc inner = outline;
-	inner.width = rect.width - 4.0f;
-	inner.height = rect.height - 4.0f;
-	inner.thickness = 0.7f;
-	inner.colorR = 0.42f;
-	inner.colorG = 0.48f;
-	inner.colorB = 0.42f;
-	inner.colorA = 0.70f;
-	inner.depth = depth - 1.0f;
-	m_renderer->DrawRectOutline(inner);
+	if (title != nullptr && title[0] != '\0')
+	{
+		const float titleSize = 1.06f;
+		const float titleX = centerX - GetUiTextWidth(title, titleSize) * 0.5f;
+		DrawText(titleX + 1.0f, rect.top + 6.0f, title, titleSize,
+			0.0f, 0.0f, 0.0f, 0.72f, depth - 1.15f);
+		DrawText(titleX, rect.top + 7.0f, title, titleSize,
+			1.0f, 1.0f, 1.0f, 1.0f, depth - 1.35f);
+	}
 }
 
 void GameEngine::DrawClassicUiPanel(const UiRect& rect, const char* title, float depth)
 {
-	(void)title;
-	if (rect.width <= 0.0f || rect.height <= 0.0f)
-		return;
-
-	const float centerX = rect.left + rect.width * 0.5f;
-	const float centerY = rect.top - rect.height * 0.5f;
-	DrawSolidRect(centerX + 3.0f, centerY - 3.0f, rect.width, rect.height,
-		0.0f, 0.0f, 0.0f, 0.34f, depth + 0.25f);
-	DrawSolidRect(centerX, centerY, rect.width, rect.height,
-		0.004f, 0.006f, 0.008f, 0.96f, depth);
-
-	RectOutlineDesc outline;
-	outline.positionX = centerX;
-	outline.positionY = centerY;
-	outline.width = rect.width;
-	outline.height = rect.height;
-	outline.thickness = 1.4f;
-	outline.colorR = 0.82f;
-	outline.colorG = 0.88f;
-	outline.colorB = 0.78f;
-	outline.colorA = 0.96f;
-	outline.depth = depth - 0.9f;
-	m_renderer->DrawRectOutline(outline);
-
-	RectOutlineDesc inner = outline;
-	inner.width = rect.width - 4.0f;
-	inner.height = rect.height - 4.0f;
-	inner.thickness = 0.7f;
-	inner.colorR = 0.42f;
-	inner.colorG = 0.48f;
-	inner.colorB = 0.42f;
-	inner.colorA = 0.72f;
-	inner.depth = depth - 1.0f;
-	m_renderer->DrawRectOutline(inner);
+	DrawUiPanel(rect, title, depth);
 }
 
 void GameEngine::DrawUiText(float x, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
 {
+	(void)colorR;
+	(void)colorG;
+	(void)colorB;
 	DrawText(x + 1.0f, y - 1.0f, text, pixelSize, 0.0f, 0.0f, 0.0f, colorA * 0.74f, depth + 0.24f);
-	DrawText(x, y, text, pixelSize, colorR, colorG, colorB, colorA, depth);
+	DrawText(x, y, text, pixelSize, 1.0f, 1.0f, 1.0f, colorA, depth);
 }
 
 void GameEngine::DrawCenteredUiText(float centerX, float y, const char* text, float pixelSize, float colorR, float colorG, float colorB, float colorA, float depth)
@@ -2293,12 +2278,12 @@ GameEngine::CraftingPanelLayout GameEngine::GetCraftingPanelLayout() const
 {
 	CraftingPanelLayout layout;
 	const UiRect panel = GetRightPanelRect(1);
-	layout.left = panel.left + 8.0f;
-	layout.top = panel.top - 8.0f;
-	layout.width = panel.width - 16.0f;
-	layout.height = panel.height - 16.0f;
-	layout.rowHeight = 17.0f;
-	layout.firstRowCenterY = layout.top - 12.0f;
+	layout.left = panel.left + 4.0f;
+	layout.top = panel.top - 4.0f;
+	layout.width = panel.width - 8.0f;
+	layout.height = panel.height - 8.0f;
+	layout.rowHeight = 20.0f;
+	layout.firstRowCenterY = layout.top - layout.rowHeight * 0.5f;
 	return layout;
 }
 
@@ -2308,8 +2293,8 @@ GameEngine::UiRect GameEngine::GetGameViewportRect() const
 	const float viewHalfHeight = GetViewHalfHeight();
 	const float fullWidth = viewHalfWidth * 2.0f;
 	const float fullHeight = viewHalfHeight * 2.0f;
-	const float gap = 6.0f;
-	const float rightPanelWidth = std::clamp(fullWidth * 0.27f, 232.0f, 330.0f);
+	const float gap = 8.0f;
+	const float rightPanelWidth = std::clamp(fullWidth * 0.29f, 260.0f, 360.0f);
 	const float gameWidth = (std::max)(fullWidth - rightPanelWidth - gap, fullWidth * 0.55f);
 	const float gameHeight = (std::max)(fullHeight * 0.48f, fullHeight - fullHeight * 0.28f);
 
@@ -2325,7 +2310,7 @@ GameEngine::UiRect GameEngine::GetInventoryPanelRect() const
 {
 	const UiRect game = GetGameViewportRect();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float gap = 6.0f;
+	const float gap = 8.0f;
 	const float bottomTop = game.top - game.height - gap;
 	const float bottomBottom = -viewHalfHeight + gap;
 	const float bottomHeight = (std::max)(80.0f, bottomTop - bottomBottom);
@@ -2356,7 +2341,7 @@ GameEngine::UiRect GameEngine::GetLogPanelRect() const
 	const UiRect game = GetGameViewportRect();
 	const UiRect inventory = GetInventoryPanelRect();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float gap = 6.0f;
+	const float gap = 8.0f;
 	const float bottomTop = game.top - game.height - gap;
 	const float bottomBottom = -viewHalfHeight + gap;
 
@@ -2373,13 +2358,13 @@ GameEngine::UiRect GameEngine::GetRightPanelRect(int panelIndex) const
 	const UiRect game = GetGameViewportRect();
 	const float viewHalfWidth = GetViewHalfWidth();
 	const float viewHalfHeight = GetViewHalfHeight();
-	const float gap = 6.0f;
+	const float gap = 8.0f;
 	const float left = game.left + game.width + gap;
 	const float totalHeight = viewHalfHeight * 2.0f - gap * 2.0f;
 	const int safeIndex = std::clamp(panelIndex, 0, 2);
-	const float mapHeight = std::clamp(totalHeight * 0.20f, 88.0f, 126.0f);
+	const float mapHeight = std::clamp(totalHeight * 0.18f, 96.0f, 132.0f);
 	const float remainingHeight = (std::max)(120.0f, totalHeight - mapHeight - gap * 2.0f);
-	const float craftHeight = remainingHeight * 0.56f;
+	const float craftHeight = remainingHeight * 0.58f;
 	const float heroHeight = remainingHeight - craftHeight;
 
 	UiRect rect;
@@ -2463,6 +2448,8 @@ int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 	{
 		return -1;
 	}
+	if (viewX >= layout.left + layout.width - 8.0f)
+		return -1;
 
 	const int visibleRows = GetVisibleCraftingRecipeRows();
 	const int recipeCount = GetCraftingRecipeCount();
@@ -2471,7 +2458,7 @@ int GameEngine::GetCraftingRecipeAt(float viewX, float viewY) const
 	for (int recipe = safeScrollOffset; recipe < lastRecipe; ++recipe)
 	{
 		const int visibleIndex = recipe - safeScrollOffset;
-		const float rowCenterY = layout.firstRowCenterY - visibleIndex * (layout.rowHeight + 2.0f);
+		const float rowCenterY = layout.firstRowCenterY - visibleIndex * layout.rowHeight;
 		if (viewY <= rowCenterY + layout.rowHeight * 0.5f &&
 			viewY >= rowCenterY - layout.rowHeight * 0.5f)
 		{

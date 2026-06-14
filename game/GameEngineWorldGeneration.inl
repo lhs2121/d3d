@@ -1078,10 +1078,13 @@ void GameEngine::InitializeWorld()
 	};
 
 	int nextTreeX = randomInt(2, 5);
+	const int spawnNoTreeRadius = spawnSafeRadius + 14;
 	for (int x = 2; x < m_blockWidth - 2; ++x)
 	{
 		const BiomeType biome = biomes[x];
 		if (x < nextTreeX)
+			continue;
+		if (std::abs(x - spawnX) <= spawnNoTreeRadius)
 			continue;
 
 		const int surfaceY = surfaceHeights[x];
@@ -1141,12 +1144,15 @@ void GameEngine::InitializeWorld()
 		nextTreeX = x + (biome == BiomeGrassland ? randomInt(7, 14) : (biome == BiomeDesert ? randomInt(12, 22) : randomInt(10, 18)));
 	}
 
+	const int spawnAirClearRadius = 3;
 	for (int y = 0; y < spawnSurfaceY; ++y)
 	{
-		for (int x = spawnX - 3; x <= spawnX + 3; ++x)
+		for (int x = spawnX - spawnAirClearRadius; x <= spawnX + spawnAirClearRadius; ++x)
 		{
-			if (IsTileInBounds(x, y))
-				m_blocks[y * m_blockWidth + x].visible = 0;
+			if (!IsTileInBounds(x, y))
+				continue;
+
+			m_blocks[y * m_blockWidth + x].visible = 0;
 		}
 	}
 	for (int x = spawnX - spawnSafeRadius; x <= spawnX + spawnSafeRadius; ++x)

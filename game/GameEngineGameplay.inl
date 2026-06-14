@@ -131,11 +131,11 @@ int GameEngine::GetCraftingRecipeCount() const
 int GameEngine::GetVisibleCraftingRecipeRows() const
 {
 	const CraftingPanelLayout layout = GetCraftingPanelLayout();
-	const float rowStride = layout.rowHeight + 2.0f;
+	const float rowStride = layout.rowHeight;
 	if (rowStride <= 0.0f)
 		return 1;
 
-	return (std::max)(1, static_cast<int>((layout.height - 12.0f) / rowStride));
+	return (std::max)(1, static_cast<int>(layout.height / rowStride));
 }
 
 int GameEngine::GetMaxCraftingScrollOffset() const
@@ -274,10 +274,19 @@ void GameEngine::UpdateCrafting(float deltaTime)
 	CraftRecipe(recipe);
 }
 
-void GameEngine::TryPlaceSelectedBlock()
+void GameEngine::TryPlaceSelectedBlock(float deltaTime)
 {
-	if (!IsKeyDown(VK_RBUTTON))
+	if (m_blockPlaceRepeatTimer > 0.0f)
+		m_blockPlaceRepeatTimer = (std::max)(0.0f, m_blockPlaceRepeatTimer - deltaTime);
+
+	if (!IsKeyHeld(VK_RBUTTON))
+	{
+		m_blockPlaceRepeatTimer = 0.0f;
+		m_lastPlacedTileX = -1;
+		m_lastPlacedTileY = -1;
 		return;
+	}
+
 	if (IsCursorOverCraftingPanel())
 		return;
 
@@ -286,13 +295,20 @@ void GameEngine::TryPlaceSelectedBlock()
 	if (!GetHoveredTile(tileX, tileY) || !CanPlaceSelectedBlockAt(tileX, tileY))
 		return;
 
+	const bool newTile = tileX != m_lastPlacedTileX || tileY != m_lastPlacedTileY;
+	if (!IsKeyDown(VK_RBUTTON) && !newTile && m_blockPlaceRepeatTimer > 0.0f)
+		return;
+
 	const int blockIndex = tileY * m_blockWidth + tileX;
 	m_blocks[blockIndex].visible = 1;
-	m_blocks[blockIndex].tileIndex = InventoryTileIndices[m_selectedInventorySlot];
+	m_blocks[blockIndex].tileIndex = GetPlacementTileIndexForSlot(m_selectedInventorySlot);
 	m_blockBreaks[blockIndex] = BlockBreakState{};
 	MarkBlockChunkDirty(tileX, tileY);
 	--m_inventoryCounts[m_selectedInventorySlot];
 	PublishLocalTileEdit(tileX, tileY);
+	m_blockPlaceRepeatTimer = BlockPlaceRepeatInterval;
+	m_lastPlacedTileX = tileX;
+	m_lastPlacedTileY = tileY;
 }
 
 void GameEngine::UpdatePlayer(float deltaTime)
@@ -449,7 +465,7 @@ void GameEngine::UpdatePlayerCombat(float deltaTime)
 
 void GameEngine::TryPlayerAttack()
 {
-	if (m_uiConsumesLeftMouse || !IsKeyDown(VK_LBUTTON))
+	if (m_uiConsumesLeftMouse || !IsKeyHeld(VK_LBUTTON))
 		return;
 
 	if (!ShouldLeftClickAttack())
@@ -977,7 +993,7 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 		const float dropY = m_worldOriginY - tileY * m_tileSize;
 		const unsigned short tileIndex = m_blocks[miningBlockIndex].tileIndex;
 		if (tileIndex != BlockLeaves)
-			SpawnDroppedItem(dropX, dropY, tileIndex, 1, tileIndex != BlockWood);
+			SpawnDroppedItem(dropX, dropY, GetDroppedItemTileIndex(tileIndex), 1, tileIndex != BlockWood && tileIndex != BlockPlacedWood);
 		else
 			SpawnLeafBreakEffect(tileX, tileY);
 		m_blocks[miningBlockIndex].visible = 0;
@@ -1158,6 +1174,14 @@ bool GameEngine::CanPlaceSelectedBlockAt(int tileX, int tileY) const
 	if (m_inventoryCounts[m_selectedInventorySlot] <= 0)
 		return false;
 
+	if (IsTopSurfaceOnlyItem(m_selectedInventorySlot))
+	{
+		if (!CanPlaceBlockAt(tileX, tileY))
+			return false;
+
+		return tileY < m_blockHeight - 1 && IsSolidTile(tileX, tileY + 1);
+	}
+
 	return CanPlaceBlockAt(tileX, tileY);
 }
 
@@ -1205,13 +1229,49 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	if (m_blocks[blockIndex].visible == 0 || m_blocks[blockIndex].tileIndex != BlockWood)
 		return false;
 
-	std::vector<unsigned char> visited(m_blocks.size(), 0);
-	std::vector<int> queue;
-	std::vector<int> woodIndices;
-	queue.reserve(64);
-	woodIndices.reserve(48);
+	std::vector<unsigned char> treeVisited(m_blocks.size(), 0);
+	std::vector<int> treeQueue;
+	std::vector<int> treeWoodIndices;
+	treeQueue.reserve(96);
+	treeWoodIndices.reserve(96);
 
-	auto tryAddWood = [&](int nextX, int nextY)
+	auto tryAddTreeWood = [&](int nextX, int nextY)
+	{
+		if (!IsTileInBounds(nextX, nextY))
+			return;
+
+		const int nextIndex = nextY * m_blockWidth + nextX;
+		if (treeVisited[nextIndex] != 0)
+			return;
+
+		const BlockTile& tile = m_blocks[nextIndex];
+		if (tile.visible == 0 || tile.tileIndex != BlockWood)
+			return;
+
+		treeVisited[nextIndex] = 1;
+		treeQueue.push_back(nextIndex);
+	};
+
+	tryAddTreeWood(startX, startY);
+	for (size_t head = 0; head < treeQueue.size(); ++head)
+	{
+		const int currentIndex = treeQueue[head];
+		treeWoodIndices.push_back(currentIndex);
+		const int currentX = currentIndex % m_blockWidth;
+		const int currentY = currentIndex / m_blockWidth;
+		tryAddTreeWood(currentX - 1, currentY);
+		tryAddTreeWood(currentX + 1, currentY);
+		tryAddTreeWood(currentX, currentY - 1);
+		tryAddTreeWood(currentX, currentY + 1);
+	}
+
+	std::vector<unsigned char> fallingVisited(m_blocks.size(), 0);
+	std::vector<int> fallingQueue;
+	std::vector<int> fallingWoodIndices;
+	fallingQueue.reserve(treeWoodIndices.size());
+	fallingWoodIndices.reserve(treeWoodIndices.size());
+
+	auto tryAddFallingWood = [&](int nextX, int nextY)
 	{
 		if (!IsTileInBounds(nextX, nextY))
 			return;
@@ -1219,46 +1279,41 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 			return;
 
 		const int nextIndex = nextY * m_blockWidth + nextX;
-		if (visited[nextIndex] != 0)
+		if (fallingVisited[nextIndex] != 0)
 			return;
 
 		const BlockTile& tile = m_blocks[nextIndex];
 		if (tile.visible == 0 || tile.tileIndex != BlockWood)
 			return;
 
-		visited[nextIndex] = 1;
-		queue.push_back(nextIndex);
+		fallingVisited[nextIndex] = 1;
+		fallingQueue.push_back(nextIndex);
 	};
 
-	tryAddWood(startX, startY);
-	for (size_t head = 0; head < queue.size(); ++head)
+	tryAddFallingWood(startX, startY);
+	for (size_t head = 0; head < fallingQueue.size(); ++head)
 	{
-		const int currentIndex = queue[head];
-		woodIndices.push_back(currentIndex);
+		const int currentIndex = fallingQueue[head];
+		if (currentIndex != blockIndex)
+			fallingWoodIndices.push_back(currentIndex);
+
 		const int currentX = currentIndex % m_blockWidth;
 		const int currentY = currentIndex / m_blockWidth;
-		tryAddWood(currentX - 1, currentY);
-		tryAddWood(currentX + 1, currentY);
-		tryAddWood(currentX, currentY - 1);
-		tryAddWood(currentX, currentY + 1);
-	}
-
-	std::vector<int> fallingWoodIndices;
-	fallingWoodIndices.reserve(woodIndices.size());
-	for (int woodIndex : woodIndices)
-	{
-		if (woodIndex != blockIndex)
-			fallingWoodIndices.push_back(woodIndex);
+		tryAddFallingWood(currentX - 1, currentY);
+		tryAddFallingWood(currentX + 1, currentY);
+		tryAddFallingWood(currentX, currentY - 1);
+		tryAddFallingWood(currentX, currentY + 1);
 	}
 
 	std::vector<int> leafIndices;
-	leafIndices.reserve(96);
-	constexpr int LeafSearchRadius = 5;
+	leafIndices.reserve(128);
+	std::vector<unsigned char> leafVisited(m_blocks.size(), 0);
+	constexpr int LeafSearchRadius = 6;
 
-	auto nearestHarvestedWoodDistance = [&](int leafX, int leafY)
+	auto nearestTreeWoodDistance = [&](int leafX, int leafY)
 	{
 		int bestDistance = 9999;
-		for (int woodIndex : woodIndices)
+		for (int woodIndex : treeWoodIndices)
 		{
 			const int woodX = woodIndex % m_blockWidth;
 			const int woodY = woodIndex / m_blockWidth;
@@ -1270,7 +1325,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		return bestDistance;
 	};
 
-	auto isClaimedByRemainingTree = [&](int leafX, int leafY, int harvestedDistance)
+	auto isClaimedByOtherTree = [&](int leafX, int leafY, int treeDistance)
 	{
 		for (int offsetY = -LeafSearchRadius; offsetY <= LeafSearchRadius; ++offsetY)
 		{
@@ -1283,11 +1338,11 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 
 				const int woodIndex = woodY * m_blockWidth + woodX;
 				const BlockTile& tile = m_blocks[woodIndex];
-				if (tile.visible == 0 || tile.tileIndex != BlockWood || visited[woodIndex] == 1)
+				if (tile.visible == 0 || tile.tileIndex != BlockWood || treeVisited[woodIndex] != 0)
 					continue;
 
 				const int distance = std::abs(offsetX) + std::abs(offsetY);
-				if (distance <= harvestedDistance + 1)
+				if (distance + 1 < treeDistance)
 					return true;
 			}
 		}
@@ -1299,28 +1354,26 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	{
 		if (!IsTileInBounds(nextX, nextY))
 			return;
-		if (nextY > startY + 2)
-			return;
 
 		const int nextIndex = nextY * m_blockWidth + nextX;
-		if (visited[nextIndex] != 0)
+		if (leafVisited[nextIndex] != 0)
 			return;
 
 		const BlockTile& tile = m_blocks[nextIndex];
 		if (tile.visible == 0 || tile.tileIndex != BlockLeaves)
 			return;
 
-		const int harvestedDistance = nearestHarvestedWoodDistance(nextX, nextY);
-		if (harvestedDistance > LeafSearchRadius + 2)
+		const int treeDistance = nearestTreeWoodDistance(nextX, nextY);
+		if (treeDistance > LeafSearchRadius + 2)
 			return;
-		if (isClaimedByRemainingTree(nextX, nextY, harvestedDistance))
+		if (isClaimedByOtherTree(nextX, nextY, treeDistance))
 			return;
 
-		visited[nextIndex] = 2;
+		leafVisited[nextIndex] = 1;
 		leafIndices.push_back(nextIndex);
 	};
 
-	for (int woodIndex : woodIndices)
+	for (int woodIndex : treeWoodIndices)
 	{
 		const int currentX = woodIndex % m_blockWidth;
 		const int currentY = woodIndex / m_blockWidth;
@@ -1373,7 +1426,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 
 float GameEngine::GetBlockBreakDuration(unsigned short tileIndex) const
 {
-	if (tileIndex == BlockWood || tileIndex == BlockLeaves)
+	if (tileIndex == BlockWood || tileIndex == BlockPlacedWood || tileIndex == BlockLeaves)
 		return BlockBreakDuration / GetSelectedChopSpeedMultiplier();
 
 	return BlockBreakDuration;
@@ -1520,6 +1573,9 @@ void GameEngine::AddBlockToInventory(unsigned short tileIndex, int amount)
 
 	switch (tileIndex)
 	{
+	case BlockPlacedWood:
+		tileIndex = BlockWood;
+		break;
 	case BlockPrairieStone:
 	case BlockMossStone:
 	case BlockSandstone:

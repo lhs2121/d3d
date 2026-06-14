@@ -31,6 +31,8 @@ struct BlockGridDesc
 	int chunkColumns = 0;
 	int chunkRows = 0;
 	unsigned int gridVersion = 0;
+	const unsigned short* atlasTileRemap = nullptr;
+	int atlasTileRemapCount = 0;
 };
 
 struct SpriteDesc

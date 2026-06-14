@@ -23,7 +23,7 @@ namespace
 	constexpr int FontAtlasTextureSize = 2048;
 	constexpr int FontAtlasCellSize = 64;
 	constexpr int FontAtlasPixelHeight = 32;
-	constexpr const WCHAR* FontFileName = L"GalmuriMono9.ttf";
+	constexpr const WCHAR* FontFileName = L"assets\\fonts\\GalmuriMono9.ttf";
 	constexpr const WCHAR* FontFamilyName = L"GalmuriMono9 Regular";
 	constexpr size_t ShaderEntryNameCapacity = 256;
 
@@ -1019,6 +1019,8 @@ void Renderer::RebuildGridChunk(const BlockGridDesc& desc, GridChunkCache& chunk
 				continue;
 
 			int tileIndex = tile.tileIndex;
+			if (desc.atlasTileRemap != nullptr && tileIndex >= 0 && tileIndex < desc.atlasTileRemapCount)
+				tileIndex = desc.atlasTileRemap[tileIndex];
 			if (tileCount > 0)
 				tileIndex = tileIndex % tileCount;
 
@@ -1549,6 +1551,8 @@ void Renderer::DrawBlockGrid(const BlockGridDesc& desc)
 				const float centerY = desc.originY - y * desc.tileSize;
 
 				int tileIndex = tile.tileIndex;
+				if (desc.atlasTileRemap != nullptr && tileIndex >= 0 && tileIndex < desc.atlasTileRemapCount)
+					tileIndex = desc.atlasTileRemap[tileIndex];
 				if (tileCount > 0)
 					tileIndex = tileIndex % tileCount;
 
