@@ -1,4 +1,4 @@
-// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
+﻿// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
 
 void GameEngine::QueryMonstersInAABB(const collib::AABB& area, std::vector<int>& results) const
 {
@@ -74,16 +74,16 @@ float GameEngine::GetViewHalfHeight() const
 
 float GameEngine::GetSurfaceWorldYAt(float worldX) const
 {
-	if (m_surfaceHeights.empty())
+	if (m_world.surfaceHeights.empty())
 		return TileTop(m_surfaceRow);
 
 	int tileX = WorldToTileX(worldX);
 	if (tileX < 0)
 		tileX = 0;
-	else if (tileX >= static_cast<int>(m_surfaceHeights.size()))
-		tileX = static_cast<int>(m_surfaceHeights.size()) - 1;
+	else if (tileX >= static_cast<int>(m_world.surfaceHeights.size()))
+		tileX = static_cast<int>(m_world.surfaceHeights.size()) - 1;
 
-	return TileTop(m_surfaceHeights[tileX]);
+	return TileTop(m_world.surfaceHeights[tileX]);
 }
 
 bool GameEngine::IsAABBBlocked(const collib::AABB& box, float inset) const
@@ -162,3 +162,4 @@ float GameEngine::TileBottom(int tileY) const
 {
 	return m_worldOriginY - tileY * m_tileSize - (m_tileSize * 0.5f);
 }
+

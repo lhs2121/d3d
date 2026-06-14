@@ -218,6 +218,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="GameInventory.h" />
+    <ClInclude Include="GameNetworkState.h" />
+    <ClInclude Include="GameNetworkTypes.h" />
+    <ClInclude Include="GameStates.h" />
+    <ClInclude Include="GameWorldData.h" />
     <ClInclude Include="GameEngine.h" />
     <ClInclude Include="GameEngineGameplay.inl" />
     <ClInclude Include="GameEngineNetwork.inl" />
@@ -227,6 +232,7 @@
     <ClInclude Include="pch.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="GameInventory.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="GameEngine.cpp" />
     <ClCompile Include="pch.cpp">

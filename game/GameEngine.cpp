@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "GameEngine.h"
 #include <algorithm>
 #include <cmath>
@@ -21,9 +21,11 @@ namespace
 	constexpr int KeyMinimap = VK_TAB;
 	constexpr float BlockBreakDuration = 0.85f;
 	constexpr float BlockPlaceRepeatInterval = 0.085f;
-	constexpr float InteractionRangeTiles = 6.0f;
-	constexpr unsigned int NetworkMagic = 0x4433444Du;
-	constexpr unsigned char NetworkVersion = 1;
+	constexpr int BlockInteractionHalfRangeX = 3;
+	constexpr int BlockInteractionRangeUp = 4;
+	constexpr int BlockInteractionRangeDown = 1;
+	constexpr float NicknameBackspaceInitialDelay = 0.32f;
+	constexpr float NicknameBackspaceRepeatInterval = 0.045f;
 	constexpr float NetworkPlayerSendInterval = 1.0f / 30.0f;
 	constexpr float NetworkItemSendInterval = 0.12f;
 	constexpr float NetworkHelloInterval = 0.25f;
@@ -43,7 +45,6 @@ namespace
 	constexpr int StartMenuActionInput = 14;
 	constexpr int StartMenuActionStart = 15;
 	constexpr int StartMenuActionNickname = 16;
-	constexpr int NetworkNicknameLength = 24;
 	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\block_atlas_extended.png";
 	constexpr const WCHAR* UiPanelDefaultTexture = L"assets\\ui\\panel_default.png";
 	constexpr const WCHAR* UiPanelInventoryTexture = L"assets\\ui\\panel_inventory.png";
@@ -99,6 +100,7 @@ namespace
 	constexpr float UiStatusFrameHeight = 377.0f;
 	constexpr int InventoryVisibleColumns = 7;
 	constexpr int InventoryVisibleRows = 4;
+	constexpr int InventoryPageCount = 2;
 	constexpr int InventoryVisibleSlotCount = InventoryVisibleColumns * InventoryVisibleRows;
 	constexpr float InventoryGridX = 131.0f;
 	constexpr float InventoryGridY = 55.0f;
@@ -160,119 +162,6 @@ namespace
 		float parallaxY = 0.0f;
 		float depth = 5.0f;
 	};
-
-	enum class NetworkPacketType : unsigned char
-	{
-		Hello = 1,
-		Welcome = 2,
-		PlayerState = 3,
-		TileEdit = 4,
-		BlockBreak = 5,
-		LeafEffect = 6,
-		DroppedItem = 7,
-	};
-
-#pragma pack(push, 1)
-	struct NetworkPacketHeader
-	{
-		unsigned int magic = NetworkMagic;
-		unsigned char version = NetworkVersion;
-		unsigned char type = 0;
-		unsigned short size = 0;
-	};
-
-	struct NetworkHelloPacket
-	{
-		NetworkPacketHeader header;
-		unsigned int token = 0;
-	};
-
-	struct NetworkWelcomePacket
-	{
-		NetworkPacketHeader header;
-		unsigned int token = 0;
-		int playerId = 0;
-		unsigned int worldSeed = 0;
-		int blockWidth = 0;
-		int blockHeight = 0;
-		float spawnX = 0.0f;
-		float spawnY = 0.0f;
-	};
-
-	struct NetworkPlayerStatePacket
-	{
-		NetworkPacketHeader header;
-		unsigned int sequence = 0;
-		int playerId = 0;
-		float x = 0.0f;
-		float y = 0.0f;
-		float velocityX = 0.0f;
-		float velocityY = 0.0f;
-		float animationTime = 0.0f;
-		float attackTimer = 0.0f;
-		int facing = 1;
-		int health = 100;
-		int selectedInventorySlot = 0;
-		unsigned char onGround = 0;
-		char nickname[NetworkNicknameLength] = {};
-	};
-
-	struct NetworkTileEditPacket
-	{
-		NetworkPacketHeader header;
-		unsigned int sequence = 0;
-		int playerId = 0;
-		int tileX = 0;
-		int tileY = 0;
-		unsigned short tileIndex = 0;
-		unsigned char visible = 0;
-	};
-
-	struct NetworkBlockBreakPacket
-	{
-		NetworkPacketHeader header;
-		int playerId = 0;
-		int tileX = 0;
-		int tileY = 0;
-		float progress = 0.0f;
-		unsigned char active = 0;
-	};
-
-	struct NetworkLeafEffectPacket
-	{
-		NetworkPacketHeader header;
-		int playerId = 0;
-		int tileX = 0;
-		int tileY = 0;
-		unsigned int seed = 0;
-	};
-
-	struct NetworkDroppedItemPacket
-	{
-		NetworkPacketHeader header;
-		int playerId = 0;
-		unsigned int networkId = 0;
-		float x = 0.0f;
-		float y = 0.0f;
-		float velocityX = 0.0f;
-		float velocityY = 0.0f;
-		float pickupDelay = 0.0f;
-		unsigned short tileIndex = 0;
-		int amount = 0;
-		int pickupPlayerId = 0;
-		unsigned char alive = 0;
-	};
-#pragma pack(pop)
-
-	NetworkPacketHeader MakeNetworkHeader(NetworkPacketType type, size_t packetSize)
-	{
-		NetworkPacketHeader header;
-		header.magic = NetworkMagic;
-		header.version = NetworkVersion;
-		header.type = static_cast<unsigned char>(type);
-		header.size = static_cast<unsigned short>(packetSize);
-		return header;
-	}
 
 	bool IsHostInputCharacter(char value)
 	{
@@ -415,6 +304,8 @@ namespace
 	constexpr int SlotCraftingTable = 7;
 	constexpr int SlotSword = 8;
 	constexpr int SlotAxe = 9;
+	constexpr int SlotTeleportPotion = 10;
+	constexpr int InventoryEmptyItem = -1;
 	constexpr int BlockInventorySlotCount = 8;
 
 	enum class InventoryItemKind
@@ -423,6 +314,7 @@ namespace
 		TerrainBlock,
 		Furniture,
 		Equipment,
+		Consumable,
 	};
 
 	struct EquipmentStats
@@ -484,6 +376,8 @@ namespace
 			return InventoryItemKind::TerrainBlock;
 		if (slot == SlotSword || slot == SlotAxe)
 			return InventoryItemKind::Equipment;
+		if (slot == SlotTeleportPotion)
+			return InventoryItemKind::Consumable;
 
 		return InventoryItemKind::Empty;
 	}
@@ -931,6 +825,7 @@ void GameEngine::Update()
 	UpdateInventoryInput();
 	UpdateCrafting(deltaTime);
 	UpdateDebugLogInput();
+	TryUseTeleportPotion();
 	TryPlaceSelectedBlock(deltaTime);
 	UpdateBlockBreaking(deltaTime);
 	UpdatePlayer(deltaTime);
@@ -1115,3 +1010,4 @@ void GameEngine::Release()
 		m_timerResolutionRaised = false;
 	}
 }
+

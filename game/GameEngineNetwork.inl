@@ -1,4 +1,4 @@
-// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
+﻿// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
 
 void GameEngine::InitializeNetwork(const NetworkConfig& config)
 {
@@ -11,12 +11,7 @@ void GameEngine::InitializeNetwork(const NetworkConfig& config)
 	m_networkHelloTimer = 0.0f;
 	m_networkItemSendTimer = 0.0f;
 	m_networkStatusTimer = 0.0f;
-	m_networkPeers.clear();
-	m_remotePlayers.clear();
-	m_remoteBlockBreaks.clear();
-	m_networkTileHistory.clear();
-	m_pendingNetworkTileEdits.clear();
-	m_pendingNetworkDroppedItems.clear();
+	m_networkState.ClearRuntime();
 	m_nextNetworkPlayerId = 2;
 	m_localPlayerId = 1;
 	m_networkPlayerSequence = 0;
@@ -119,19 +114,25 @@ void GameEngine::ShutdownNetwork()
 
 	m_networkConnected = false;
 	m_networkSeedReady = false;
-	m_networkPeers.clear();
-	m_remotePlayers.clear();
-	m_remoteBlockBreaks.clear();
-	m_pendingNetworkTileEdits.clear();
-	m_pendingNetworkDroppedItems.clear();
+	m_networkState.ClearRuntime();
 	m_networkBreakingBlockIndex = -1;
 }
 
 void GameEngine::UpdateStartMenu(float deltaTime)
 {
-	(void)deltaTime;
 	if (m_input == nullptr)
 		return;
+
+	const float viewHalfWidth = GetViewHalfWidth();
+	UiRect panel;
+	panel.width = std::clamp(viewHalfWidth * 1.18f, 500.0f, 650.0f);
+	panel.height = 382.0f;
+	panel.left = -panel.width * 0.5f;
+	panel.top = panel.height * 0.5f + 12.0f;
+	const float inputWidth = panel.width - 56.0f;
+	const float inputCenterX = panel.left + panel.width * 0.5f;
+	const float nicknameTextLeft = inputCenterX - inputWidth * 0.5f + 12.0f;
+	const float nicknamePixelSize = 1.55f;
 
 	if (IsKeyDown(VK_LBUTTON))
 	{
@@ -142,6 +143,11 @@ void GameEngine::UpdateStartMenu(float deltaTime)
 			const int action = GetStartMenuActionAt(cursorX, cursorY);
 			m_startJoinHostEditing = action == StartMenuActionInput;
 			m_startNicknameEditing = action == StartMenuActionNickname;
+			if (m_startNicknameEditing)
+				BeginLocalNicknameSelection(cursorX, nicknameTextLeft, nicknamePixelSize);
+			else
+				ResetLocalNicknameSelection();
+
 			if (action == StartMenuActionSingle)
 			{
 				m_networkConfig.mode = NetworkConfig::Mode::SinglePlayer;
@@ -170,11 +176,22 @@ void GameEngine::UpdateStartMenu(float deltaTime)
 		}
 	}
 
+	if (m_startNicknameEditing && m_localNicknameSelecting && IsKeyHeld(VK_LBUTTON))
+	{
+		float cursorX = 0.0f;
+		float cursorY = 0.0f;
+		if (GetCursorViewPosition(cursorX, cursorY))
+			UpdateLocalNicknameSelectionDrag(cursorX, nicknameTextLeft, nicknamePixelSize);
+	}
+	if (m_input->IsReleased(VK_LBUTTON, this))
+		m_localNicknameSelecting = false;
+
 	if (IsKeyDown(VK_RETURN))
 	{
 		if (m_startNicknameEditing)
 		{
 			m_startNicknameEditing = false;
+			ResetLocalNicknameSelection();
 			return;
 		}
 		if (!m_startJoinHostEditing)
@@ -186,7 +203,7 @@ void GameEngine::UpdateStartMenu(float deltaTime)
 
 	if (m_startNicknameEditing)
 	{
-		UpdateLocalNicknameInput();
+		UpdateLocalNicknameInput(deltaTime);
 		return;
 	}
 
@@ -321,10 +338,10 @@ void GameEngine::DrawStartMenu()
 	nicknameOutline.depth = -7.5f;
 	m_renderer->DrawRectOutline(nicknameOutline);
 
-	char nicknameText[72] = {};
-	std::snprintf(nicknameText, sizeof(nicknameText), "닉네임 %s%s", GetLocalNickname(), m_startNicknameEditing ? "-" : "");
-	DrawUiText(inputCenterX - inputWidth * 0.5f + 12.0f, nicknameCenterY + 5.5f, nicknameText, 1.24f,
-		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+	const float nicknameTextLeft = inputCenterX - inputWidth * 0.5f + 12.0f;
+	DrawUiText(nicknameTextLeft, nicknameCenterY + 24.0f, "닉네임", 1.05f,
+		0.78f, 0.70f, 0.62f, 1.0f, -8.0f);
+	DrawLocalNicknameInputValue(nicknameTextLeft, nicknameCenterY + 5.5f, 1.55f, m_startNicknameEditing, -8.0f);
 
 	const float inputCenterY = panel.top - 151.0f;
 	const bool inputHovered = hoverAction == StartMenuActionInput;
@@ -475,15 +492,23 @@ int GameEngine::GetStartMenuActionAt(float viewX, float viewY) const
 
 void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 {
-	(void)deltaTime;
 	if (m_input == nullptr)
 		return;
+
+	const UiRect panel = GetRightPanelRect(2);
+	const float panelLeft = panel.left;
+	const float panelTop = panel.top;
+	const float inputCenterX = panelLeft + panel.width * 0.5f;
+	const float inputWidth = panel.width - 24.0f;
+	const float nicknameTextLeft = inputCenterX - inputWidth * 0.5f + 58.0f;
+	const float nicknamePixelSize = 1.08f;
 
 	if (IsKeyDown(VK_ESCAPE))
 	{
 		m_multiplayerMenuOpen = false;
 		m_multiplayerJoinHostEditing = false;
 		m_multiplayerNicknameEditing = false;
+		ResetLocalNicknameSelection();
 		return;
 	}
 
@@ -496,6 +521,11 @@ void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 			const int action = GetMultiplayerMenuActionAt(cursorX, cursorY);
 			m_multiplayerJoinHostEditing = action == MultiplayerActionInput;
 			m_multiplayerNicknameEditing = action == MultiplayerActionNickname;
+			if (m_multiplayerNicknameEditing)
+				BeginLocalNicknameSelection(cursorX, nicknameTextLeft, nicknamePixelSize);
+			else
+				ResetLocalNicknameSelection();
+
 			if (action == MultiplayerActionHost)
 			{
 				m_multiplayerNicknameEditing = false;
@@ -511,6 +541,7 @@ void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 				m_multiplayerMenuOpen = false;
 				m_multiplayerJoinHostEditing = false;
 				m_multiplayerNicknameEditing = false;
+				ResetLocalNicknameSelection();
 			}
 			else if (action == MultiplayerActionCopyIp)
 			{
@@ -524,15 +555,26 @@ void GameEngine::UpdateMultiplayerMenu(float deltaTime)
 		}
 	}
 
+	if (m_multiplayerNicknameEditing && m_localNicknameSelecting && IsKeyHeld(VK_LBUTTON))
+	{
+		float cursorX = 0.0f;
+		float cursorY = 0.0f;
+		if (GetCursorViewPosition(cursorX, cursorY))
+			UpdateLocalNicknameSelectionDrag(cursorX, nicknameTextLeft, nicknamePixelSize);
+	}
+	if (m_input->IsReleased(VK_LBUTTON, this))
+		m_localNicknameSelecting = false;
+
 	if (m_multiplayerNicknameEditing)
 	{
 		if (IsKeyDown(VK_RETURN))
 		{
 			m_multiplayerNicknameEditing = false;
+			ResetLocalNicknameSelection();
 			return;
 		}
 
-		UpdateLocalNicknameInput();
+		UpdateLocalNicknameInput(deltaTime);
 		return;
 	}
 
@@ -664,10 +706,11 @@ void GameEngine::DrawMultiplayerMenu()
 	nicknameOutline.depth = -10.0f;
 	m_renderer->DrawRectOutline(nicknameOutline);
 
-	char nicknameText[72] = {};
-	std::snprintf(nicknameText, sizeof(nicknameText), "닉네임 %s%s", GetLocalNickname(), m_multiplayerNicknameEditing ? "-" : "");
-	DrawUiText(inputCenterX - inputWidth * 0.5f + 9.0f, nicknameCenterY + 5.0f, nicknameText, 1.08f,
-		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -10.2f);
+	const float nicknameLabelX = inputCenterX - inputWidth * 0.5f + 9.0f;
+	const float nicknameValueX = nicknameLabelX + 49.0f;
+	DrawUiText(nicknameLabelX, nicknameCenterY + 5.0f, "닉네임", 0.92f,
+		0.78f, 0.70f, 0.62f, 1.0f, -10.2f);
+	DrawLocalNicknameInputValue(nicknameValueX, nicknameCenterY + 5.0f, 1.08f, m_multiplayerNicknameEditing, -10.2f);
 
 	const float inputCenterY = panelTop - 98.0f;
 	const bool inputHovered = hoverAction == MultiplayerActionInput;
@@ -818,17 +861,165 @@ void GameEngine::PasteMultiplayerJoinHostFromClipboard()
 	SetMultiplayerMenuStatus("붙여넣음");
 }
 
+void GameEngine::ResetLocalNicknameSelection()
+{
+	const int length = static_cast<int>(std::strlen(m_localNickname.data()));
+	m_localNicknameCursor = std::clamp(m_localNicknameCursor, 0, length);
+	m_localNicknameSelectionAnchor = m_localNicknameCursor;
+	m_localNicknameSelectionCursor = m_localNicknameCursor;
+	m_localNicknameSelecting = false;
+}
+
+bool GameEngine::HasLocalNicknameSelection() const
+{
+	return m_localNicknameSelectionAnchor != m_localNicknameSelectionCursor;
+}
+
+void GameEngine::DeleteLocalNicknameSelection()
+{
+	if (!HasLocalNicknameSelection())
+		return;
+
+	const int length = static_cast<int>(std::strlen(m_localNickname.data()));
+	const int selectionStart = std::clamp((std::min)(m_localNicknameSelectionAnchor, m_localNicknameSelectionCursor), 0, length);
+	const int selectionEnd = std::clamp((std::max)(m_localNicknameSelectionAnchor, m_localNicknameSelectionCursor), 0, length);
+	if (selectionStart >= selectionEnd)
+	{
+		ResetLocalNicknameSelection();
+		return;
+	}
+
+	const size_t tailLength = static_cast<size_t>(length - selectionEnd) + 1;
+	std::memmove(m_localNickname.data() + selectionStart, m_localNickname.data() + selectionEnd, tailLength);
+	m_localNicknameCursor = selectionStart;
+	ResetLocalNicknameSelection();
+}
+
+void GameEngine::DeleteLocalNicknameBackward()
+{
+	if (HasLocalNicknameSelection())
+	{
+		DeleteLocalNicknameSelection();
+		return;
+	}
+
+	const int length = static_cast<int>(std::strlen(m_localNickname.data()));
+	m_localNicknameCursor = std::clamp(m_localNicknameCursor, 0, length);
+	if (m_localNicknameCursor <= 0)
+		return;
+
+	const int removeIndex = m_localNicknameCursor - 1;
+	const size_t tailLength = static_cast<size_t>(length - m_localNicknameCursor) + 1;
+	std::memmove(m_localNickname.data() + removeIndex, m_localNickname.data() + m_localNicknameCursor, tailLength);
+	m_localNicknameCursor = removeIndex;
+	ResetLocalNicknameSelection();
+}
+
+int GameEngine::GetLocalNicknameTextIndexAt(float viewX, float textLeft, float pixelSize) const
+{
+	const char* nickname = m_localNickname.data();
+	const int length = static_cast<int>(std::strlen(nickname));
+	if (viewX <= textLeft)
+		return 0;
+
+	float cursorX = textLeft;
+	for (int index = 0; index < length; ++index)
+	{
+		const float charWidth = nickname[index] == ' ' ? pixelSize * 4.0f : pixelSize * 6.0f;
+		if (viewX < cursorX + charWidth * 0.5f)
+			return index;
+
+		cursorX += charWidth;
+	}
+
+	return length;
+}
+
+void GameEngine::BeginLocalNicknameSelection(float viewX, float textLeft, float pixelSize)
+{
+	const int index = GetLocalNicknameTextIndexAt(viewX, textLeft, pixelSize);
+	m_localNicknameCursor = index;
+	m_localNicknameSelectionAnchor = index;
+	m_localNicknameSelectionCursor = index;
+	m_localNicknameSelecting = true;
+}
+
+void GameEngine::UpdateLocalNicknameSelectionDrag(float viewX, float textLeft, float pixelSize)
+{
+	if (!m_localNicknameSelecting)
+		return;
+
+	m_localNicknameSelectionCursor = GetLocalNicknameTextIndexAt(viewX, textLeft, pixelSize);
+	m_localNicknameCursor = m_localNicknameSelectionCursor;
+}
+
+void GameEngine::DrawLocalNicknameInputValue(float textLeft, float textY, float pixelSize, bool editing, float depth)
+{
+	const char* nickname = m_localNickname.data();
+	const int length = static_cast<int>(std::strlen(nickname));
+	const bool hasSelection = editing && HasLocalNicknameSelection();
+
+	if (hasSelection)
+	{
+		const int selectionStart = std::clamp((std::min)(m_localNicknameSelectionAnchor, m_localNicknameSelectionCursor), 0, length);
+		const int selectionEnd = std::clamp((std::max)(m_localNicknameSelectionAnchor, m_localNicknameSelectionCursor), 0, length);
+		float startX = textLeft;
+		float endX = textLeft;
+		for (int index = 0; index < selectionEnd; ++index)
+		{
+			const float charWidth = nickname[index] == ' ' ? pixelSize * 4.0f : pixelSize * 6.0f;
+			if (index < selectionStart)
+				startX += charWidth;
+			endX += charWidth;
+		}
+
+		if (endX > startX)
+		{
+			DrawSolidRect((startX + endX) * 0.5f, textY - pixelSize * 3.5f,
+				endX - startX + 2.0f, pixelSize * 8.0f,
+				0.64f, 0.42f, 0.18f, 0.72f, depth + 0.16f);
+		}
+	}
+
+	char displayText[GameNetworkNicknameLength + 2] = {};
+	const int cursorIndex = std::clamp(m_localNicknameCursor, 0, length);
+	if (editing && !hasSelection)
+	{
+		for (int index = 0; index < cursorIndex && index < GameNetworkNicknameLength; ++index)
+			displayText[index] = nickname[index];
+		displayText[cursorIndex] = '-';
+		for (int index = cursorIndex; index < length && index + 1 < static_cast<int>(sizeof(displayText)); ++index)
+			displayText[index + 1] = nickname[index];
+	}
+	else
+	{
+		std::snprintf(displayText, sizeof(displayText), "%s", nickname[0] != '\0' ? nickname : (editing ? "" : "PLAYER"));
+	}
+
+	DrawUiText(textLeft, textY, displayText, pixelSize,
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, depth);
+}
+
 void GameEngine::AppendLocalNicknameChar(char value)
 {
 	if (!IsNicknameInputCharacter(value))
 		return;
 
-	const size_t length = std::strlen(m_localNickname.data());
-	if (length + 1 >= m_localNickname.size())
+	if (HasLocalNicknameSelection())
+		DeleteLocalNicknameSelection();
+
+	const int length = static_cast<int>(std::strlen(m_localNickname.data()));
+	m_localNicknameCursor = std::clamp(m_localNicknameCursor, 0, length);
+	if (length + 1 >= static_cast<int>(m_localNickname.size()))
 		return;
 
-	m_localNickname[length] = value;
-	m_localNickname[length + 1] = '\0';
+	std::memmove(
+		m_localNickname.data() + m_localNicknameCursor + 1,
+		m_localNickname.data() + m_localNicknameCursor,
+		static_cast<size_t>(length - m_localNicknameCursor) + 1);
+	m_localNickname[m_localNicknameCursor] = value;
+	++m_localNicknameCursor;
+	ResetLocalNicknameSelection();
 }
 
 void GameEngine::PasteLocalNicknameFromClipboard()
@@ -865,10 +1056,12 @@ void GameEngine::PasteLocalNicknameFromClipboard()
 	CloseClipboard();
 	if (m_localNickname[0] == '\0')
 		std::snprintf(m_localNickname.data(), m_localNickname.size(), "PLAYER");
+	m_localNicknameCursor = static_cast<int>(std::strlen(m_localNickname.data()));
+	ResetLocalNicknameSelection();
 	SetMultiplayerMenuStatus("닉네임 붙여넣음");
 }
 
-void GameEngine::UpdateLocalNicknameInput()
+void GameEngine::UpdateLocalNicknameInput(float deltaTime)
 {
 	if ((IsKeyHeld(VK_CONTROL) || IsKeyHeld(VK_LCONTROL) || IsKeyHeld(VK_RCONTROL)) &&
 		IsKeyDown(0x56))
@@ -877,11 +1070,24 @@ void GameEngine::UpdateLocalNicknameInput()
 		return;
 	}
 
+	if (!IsKeyHeld(VK_BACK))
+		m_localNicknameBackspaceTimer = 0.0f;
+
 	if (IsKeyDown(VK_BACK))
 	{
-		const size_t length = std::strlen(m_localNickname.data());
-		if (length > 0)
-			m_localNickname[length - 1] = '\0';
+		DeleteLocalNicknameBackward();
+		m_localNicknameBackspaceTimer = NicknameBackspaceInitialDelay;
+		return;
+	}
+
+	if (IsKeyHeld(VK_BACK))
+	{
+		m_localNicknameBackspaceTimer -= deltaTime;
+		if (m_localNicknameBackspaceTimer <= 0.0f)
+		{
+			DeleteLocalNicknameBackward();
+			m_localNicknameBackspaceTimer += NicknameBackspaceRepeatInterval;
+		}
 		return;
 	}
 
@@ -938,7 +1144,7 @@ void GameEngine::BuildNetworkPeerListText(char* destination, size_t destinationS
 	destination[0] = '\0';
 	size_t used = 0;
 	int appended = 0;
-	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	for (const RemotePlayerState& remotePlayer : m_networkState.remotePlayers)
 	{
 		if (!remotePlayer.active)
 			continue;
@@ -1049,13 +1255,13 @@ void GameEngine::UpdateNetwork(float deltaTime)
 		return;
 	}
 
-	for (RemotePlayerState& remotePlayer : m_remotePlayers)
+	for (RemotePlayerState& remotePlayer : m_networkState.remotePlayers)
 	{
 		if (remotePlayer.active && m_networkTime - remotePlayer.lastHeardTime > NetworkRemoteTimeout)
 			remotePlayer.active = false;
 	}
 
-	for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	for (RemoteBlockBreakState& remoteBreak : m_networkState.remoteBlockBreaks)
 	{
 		if (remoteBreak.active && m_networkTime - remoteBreak.lastHeardTime > NetworkBlockBreakRemoteTimeout)
 			remoteBreak.active = false;
@@ -1106,7 +1312,7 @@ void GameEngine::SendLocalPlayerState()
 	packet.attackTimer = m_attackTimer;
 	packet.facing = m_player.facing;
 	packet.health = m_playerHealth;
-	packet.selectedInventorySlot = m_selectedInventorySlot;
+	packet.selectedInventorySlot = m_inventory.GetSelectedSlot();
 	packet.onGround = m_player.onGround ? 1 : 0;
 	CopyLocalNicknameTo(packet.nickname, sizeof(packet.nickname));
 
@@ -1129,7 +1335,7 @@ void GameEngine::SendWelcomePacket(const NetworkAddress& address, int playerId, 
 	packet.spawnY = m_playerSpawnY;
 	SendNetworkPacket(address, &packet, sizeof(packet));
 
-	for (const NetworkTileEditState& edit : m_networkTileHistory)
+	for (const NetworkTileEditState& edit : m_networkState.tileHistory)
 		SendTileEditPacket(edit.tileX, edit.tileY, edit.tileIndex, edit.visible, edit.sequence, &address);
 
 	for (DroppedItemState& item : m_droppedItems)
@@ -1181,7 +1387,7 @@ void GameEngine::BroadcastTileEdit(int tileX, int tileY, unsigned short tileInde
 	edit.tileIndex = tileIndex;
 	edit.visible = visible;
 	edit.sequence = sequence;
-	m_networkTileHistory.push_back(edit);
+	m_networkState.tileHistory.push_back(edit);
 	SendTileEditPacket(tileX, tileY, tileIndex, visible, sequence, nullptr);
 }
 
@@ -1192,7 +1398,7 @@ void GameEngine::PublishLocalTileEdit(int tileX, int tileY)
 	if (m_networkMode == NetworkConfig::Mode::Client && !m_networkConnected)
 		return;
 
-	const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+	const BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
 	if (m_networkMode == NetworkConfig::Mode::Host)
 	{
 		BroadcastTileEdit(tileX, tileY, tile.tileIndex, tile.visible);
@@ -1207,23 +1413,23 @@ void GameEngine::ApplyNetworkTileEdit(int tileX, int tileY, unsigned short tileI
 	if (!IsTileInBounds(tileX, tileY))
 		return;
 
-	if (m_blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
+	if (m_world.blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
 	{
 		NetworkTileEditState edit;
 		edit.tileX = tileX;
 		edit.tileY = tileY;
 		edit.tileIndex = tileIndex;
 		edit.visible = visible;
-		m_pendingNetworkTileEdits.push_back(edit);
+		m_networkState.pendingTileEdits.push_back(edit);
 		return;
 	}
 
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	m_blocks[blockIndex].tileIndex = tileIndex;
-	m_blocks[blockIndex].visible = visible != 0 ? 1 : 0;
-	if (blockIndex >= 0 && blockIndex < static_cast<int>(m_blockBreaks.size()))
-		m_blockBreaks[blockIndex] = BlockBreakState();
-	for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	m_world.blocks[blockIndex].tileIndex = tileIndex;
+	m_world.blocks[blockIndex].visible = visible != 0 ? 1 : 0;
+	if (blockIndex >= 0 && blockIndex < static_cast<int>(m_world.blockBreaks.size()))
+		m_world.blockBreaks[blockIndex] = BlockBreakState();
+	for (RemoteBlockBreakState& remoteBreak : m_networkState.remoteBlockBreaks)
 	{
 		if (remoteBreak.tileX == tileX && remoteBreak.tileY == tileY)
 			remoteBreak.active = false;
@@ -1274,7 +1480,7 @@ void GameEngine::ApplyNetworkBlockBreakState(int playerId, int tileX, int tileY,
 		return;
 
 	RemoteBlockBreakState* state = nullptr;
-	for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	for (RemoteBlockBreakState& remoteBreak : m_networkState.remoteBlockBreaks)
 	{
 		if (remoteBreak.playerId == playerId)
 		{
@@ -1290,16 +1496,16 @@ void GameEngine::ApplyNetworkBlockBreakState(int playerId, int tileX, int tileY,
 		return;
 	}
 
-	if (m_blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
+	if (m_world.blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
 		return;
 
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	if (m_blocks[blockIndex].visible == 0)
+	if (m_world.blocks[blockIndex].visible == 0)
 		return;
 
 	if (state == nullptr)
 	{
-		for (RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+		for (RemoteBlockBreakState& remoteBreak : m_networkState.remoteBlockBreaks)
 		{
 			if (!remoteBreak.active)
 			{
@@ -1311,11 +1517,11 @@ void GameEngine::ApplyNetworkBlockBreakState(int playerId, int tileX, int tileY,
 
 	if (state == nullptr)
 	{
-		if (static_cast<int>(m_remoteBlockBreaks.size()) >= NetworkMaxPeers)
+		if (static_cast<int>(m_networkState.remoteBlockBreaks.size()) >= NetworkMaxPeers)
 			return;
 
-		m_remoteBlockBreaks.push_back(RemoteBlockBreakState());
-		state = &m_remoteBlockBreaks.back();
+		m_networkState.remoteBlockBreaks.push_back(RemoteBlockBreakState());
+		state = &m_networkState.remoteBlockBreaks.back();
 	}
 
 	state->playerId = playerId;
@@ -1414,7 +1620,7 @@ void GameEngine::ApplyNetworkDroppedItemState(unsigned int networkId, int player
 		return;
 
 	const int resolvedPickupPlayerId = pickupPlayerId > 0 ? pickupPlayerId : playerId;
-	if (m_blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
+	if (m_world.blocks.size() != static_cast<size_t>(m_blockWidth * m_blockHeight))
 	{
 		DroppedItemState pendingItem;
 		pendingItem.x = x;
@@ -1427,7 +1633,7 @@ void GameEngine::ApplyNetworkDroppedItemState(unsigned int networkId, int player
 		pendingItem.amount = amount;
 		pendingItem.pickupPlayerId = resolvedPickupPlayerId;
 		pendingItem.alive = alive != 0;
-		m_pendingNetworkDroppedItems.push_back(pendingItem);
+		m_networkState.pendingDroppedItems.push_back(pendingItem);
 		return;
 	}
 
@@ -1514,7 +1720,7 @@ void GameEngine::EnsureDroppedItemNetworkId(DroppedItemState& item)
 		item.networkId = GenerateNetworkItemId();
 }
 
-GameEngine::DroppedItemState* GameEngine::FindDroppedItemByNetworkId(unsigned int networkId)
+DroppedItemState* GameEngine::FindDroppedItemByNetworkId(unsigned int networkId)
 {
 	if (networkId == 0)
 		return nullptr;
@@ -1550,7 +1756,7 @@ int GameEngine::ChooseDroppedItemPickupPlayer(float worldX, float worldY) const
 	const float claimRadius = m_tileSize * 7.5f;
 	const float claimRadiusSq = claimRadius * claimRadius;
 
-	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	for (const RemotePlayerState& remotePlayer : m_networkState.remotePlayers)
 	{
 		if (!remotePlayer.active || remotePlayer.id <= 0)
 			continue;
@@ -1589,7 +1795,7 @@ bool GameEngine::TryGetDroppedItemPickupPosition(const DroppedItemState& item, f
 	if (remotePlayerIndex < 0)
 		return false;
 
-	const RemotePlayerState& remotePlayer = m_remotePlayers[remotePlayerIndex];
+	const RemotePlayerState& remotePlayer = m_networkState.remotePlayers[remotePlayerIndex];
 	if (!remotePlayer.active)
 		return false;
 
@@ -1611,7 +1817,7 @@ void GameEngine::BroadcastNetworkPacket(const void* packet, int packetSize, cons
 	if (m_networkMode != NetworkConfig::Mode::Host)
 		return;
 
-	for (const NetworkPeerState& peer : m_networkPeers)
+	for (const NetworkPeerState& peer : m_networkState.peers)
 	{
 		if (!peer.active)
 			continue;
@@ -1628,7 +1834,7 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		return;
 
 	const NetworkPacketHeader* header = reinterpret_cast<const NetworkPacketHeader*>(data);
-	if (header->magic != NetworkMagic || header->version != NetworkVersion || header->size != dataSize)
+	if (header->magic != GameNetworkMagic || header->version != GameNetworkVersion || header->size != dataSize)
 		return;
 
 	const NetworkPacketType packetType = static_cast<NetworkPacketType>(header->type);
@@ -1643,7 +1849,7 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		int peerIndex = FindNetworkPeer(from);
 		if (peerIndex < 0)
 		{
-			if (static_cast<int>(m_networkPeers.size()) >= NetworkMaxPeers)
+			if (static_cast<int>(m_networkState.peers.size()) >= NetworkMaxPeers)
 				return;
 
 			NetworkPeerState peer;
@@ -1652,11 +1858,11 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 			peer.token = packet->token;
 			peer.playerId = m_nextNetworkPlayerId++;
 			peer.active = true;
-			m_networkPeers.push_back(peer);
-			peerIndex = static_cast<int>(m_networkPeers.size()) - 1;
+			m_networkState.peers.push_back(peer);
+			peerIndex = static_cast<int>(m_networkState.peers.size()) - 1;
 		}
 
-		NetworkPeerState& peer = m_networkPeers[peerIndex];
+		NetworkPeerState& peer = m_networkState.peers[peerIndex];
 		peer.lastHeardTime = m_networkTime;
 		peer.token = packet->token;
 		peer.active = true;
@@ -1674,7 +1880,7 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		if (packet->blockWidth != m_blockWidth || packet->blockHeight != m_blockHeight)
 			return;
 
-		const bool shouldRebuildWorld = !m_gameStarted || m_blocks.empty() || m_worldSeed != packet->worldSeed;
+		const bool shouldRebuildWorld = !m_gameStarted || m_world.blocks.empty() || m_worldSeed != packet->worldSeed;
 		m_localPlayerId = packet->playerId;
 		m_worldSeed = packet->worldSeed;
 		m_networkSeedReady = true;
@@ -1703,10 +1909,10 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		if (m_networkMode == NetworkConfig::Mode::Host)
 		{
 			const int peerIndex = FindNetworkPeer(from);
-			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+			if (peerIndex < 0 || m_networkState.peers[peerIndex].playerId != packet->playerId)
 				return;
 
-			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			m_networkState.peers[peerIndex].lastHeardTime = m_networkTime;
 			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
 		}
 
@@ -1726,7 +1932,7 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		remotePlayer->health = packet->health;
 		remotePlayer->selectedInventorySlot = packet->selectedInventorySlot;
 		std::snprintf(remotePlayer->nickname.data(), remotePlayer->nickname.size(),
-			"%.*s", NetworkNicknameLength - 1, packet->nickname);
+			"%.*s", GameNetworkNicknameLength - 1, packet->nickname);
 		remotePlayer->lastHeardTime = m_networkTime;
 		remotePlayer->active = true;
 		break;
@@ -1740,10 +1946,10 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		if (m_networkMode == NetworkConfig::Mode::Host)
 		{
 			const int peerIndex = FindNetworkPeer(from);
-			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+			if (peerIndex < 0 || m_networkState.peers[peerIndex].playerId != packet->playerId)
 				return;
 
-			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			m_networkState.peers[peerIndex].lastHeardTime = m_networkTime;
 			ApplyNetworkTileEdit(packet->tileX, packet->tileY, packet->tileIndex, packet->visible);
 			BroadcastTileEdit(packet->tileX, packet->tileY, packet->tileIndex, packet->visible);
 			return;
@@ -1757,7 +1963,7 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 			edit.tileIndex = packet->tileIndex;
 			edit.visible = packet->visible;
 			edit.sequence = packet->sequence;
-			m_pendingNetworkTileEdits.push_back(edit);
+			m_networkState.pendingTileEdits.push_back(edit);
 			return;
 		}
 
@@ -1776,10 +1982,10 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		if (m_networkMode == NetworkConfig::Mode::Host)
 		{
 			const int peerIndex = FindNetworkPeer(from);
-			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+			if (peerIndex < 0 || m_networkState.peers[peerIndex].playerId != packet->playerId)
 				return;
 
-			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			m_networkState.peers[peerIndex].lastHeardTime = m_networkTime;
 			ApplyNetworkBlockBreakState(packet->playerId, packet->tileX, packet->tileY, packet->progress, packet->active != 0);
 			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
 			return;
@@ -1801,10 +2007,10 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		if (m_networkMode == NetworkConfig::Mode::Host)
 		{
 			const int peerIndex = FindNetworkPeer(from);
-			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+			if (peerIndex < 0 || m_networkState.peers[peerIndex].playerId != packet->playerId)
 				return;
 
-			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			m_networkState.peers[peerIndex].lastHeardTime = m_networkTime;
 			ApplyNetworkLeafBreakEffect(packet->tileX, packet->tileY, packet->seed);
 			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
 			return;
@@ -1830,10 +2036,10 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 		if (m_networkMode == NetworkConfig::Mode::Host)
 		{
 			const int peerIndex = FindNetworkPeer(from);
-			if (peerIndex < 0 || m_networkPeers[peerIndex].playerId != packet->playerId)
+			if (peerIndex < 0 || m_networkState.peers[peerIndex].playerId != packet->playerId)
 				return;
 
-			m_networkPeers[peerIndex].lastHeardTime = m_networkTime;
+			m_networkState.peers[peerIndex].lastHeardTime = m_networkTime;
 			ApplyNetworkDroppedItemState(packet->networkId, packet->playerId, packet->pickupPlayerId, packet->x, packet->y, packet->velocityX, packet->velocityY, packet->pickupDelay, packet->tileIndex, packet->amount, packet->alive);
 			BroadcastNetworkPacket(packet, sizeof(*packet), &from);
 			return;
@@ -1850,9 +2056,9 @@ void GameEngine::HandleNetworkPacket(const char* data, int dataSize, const Netwo
 
 int GameEngine::FindNetworkPeer(const NetworkAddress& address) const
 {
-	for (size_t i = 0; i < m_networkPeers.size(); ++i)
+	for (size_t i = 0; i < m_networkState.peers.size(); ++i)
 	{
-		const NetworkPeerState& peer = m_networkPeers[i];
+		const NetworkPeerState& peer = m_networkState.peers[i];
 		if (NetworkAddressesEqual(peer.address, address))
 			return static_cast<int>(i);
 	}
@@ -1862,33 +2068,33 @@ int GameEngine::FindNetworkPeer(const NetworkAddress& address) const
 
 int GameEngine::FindRemotePlayer(int playerId) const
 {
-	for (size_t i = 0; i < m_remotePlayers.size(); ++i)
+	for (size_t i = 0; i < m_networkState.remotePlayers.size(); ++i)
 	{
-		if (m_remotePlayers[i].id == playerId)
+		if (m_networkState.remotePlayers[i].id == playerId)
 			return static_cast<int>(i);
 	}
 
 	return -1;
 }
 
-GameEngine::RemotePlayerState* GameEngine::GetOrCreateRemotePlayer(int playerId)
+RemotePlayerState* GameEngine::GetOrCreateRemotePlayer(int playerId)
 {
 	if (playerId == m_localPlayerId || playerId <= 0)
 		return nullptr;
 
 	const int existingIndex = FindRemotePlayer(playerId);
 	if (existingIndex >= 0)
-		return &m_remotePlayers[existingIndex];
+		return &m_networkState.remotePlayers[existingIndex];
 
-	if (static_cast<int>(m_remotePlayers.size()) >= NetworkMaxPeers)
+	if (static_cast<int>(m_networkState.remotePlayers.size()) >= NetworkMaxPeers)
 		return nullptr;
 
 	RemotePlayerState remotePlayer;
 	remotePlayer.id = playerId;
 	remotePlayer.health = GetPlayerMaxHealth();
 	remotePlayer.active = true;
-	m_remotePlayers.push_back(remotePlayer);
-	return &m_remotePlayers.back();
+	m_networkState.remotePlayers.push_back(remotePlayer);
+	return &m_networkState.remotePlayers.back();
 }
 
 const char* GameEngine::GetNetworkModeText() const
@@ -1899,3 +2105,5 @@ const char* GameEngine::GetNetworkModeText() const
 		return "참가";
 	return "혼자";
 }
+
+

@@ -1,4 +1,4 @@
-// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
+﻿// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
 
 void GameEngine::DrawBackground()
 {
@@ -21,7 +21,7 @@ void GameEngine::DrawBackground()
 			continue;
 
 		const int tileX = std::clamp(sampleTileX, 0, m_blockWidth - 1);
-		const int biome = m_biomes.empty() ? BiomeGrassland : std::clamp(static_cast<int>(m_biomes[tileX]), 0, BackgroundBiomeCount - 1);
+		const int biome = m_world.biomes.empty() ? BiomeGrassland : std::clamp(static_cast<int>(m_world.biomes[tileX]), 0, BackgroundBiomeCount - 1);
 		const float blend = 1.0f - distance / static_cast<float>(BlendTiles + 1);
 		const float weight = SmoothStep(Clamp01(blend));
 		biomeWeights[biome] += weight;
@@ -437,7 +437,7 @@ void GameEngine::DrawWorld()
 
 	BlockGridDesc gridDesc;
 	gridDesc.textureFile = BlockAtlasTexture;
-	gridDesc.tiles = m_blocks.data();
+	gridDesc.tiles = m_world.blocks.data();
 	gridDesc.width = m_blockWidth;
 	gridDesc.height = m_blockHeight;
 	gridDesc.atlasColumns = BlockAtlasColumns;
@@ -563,15 +563,15 @@ void GameEngine::DrawBlockCracks()
 		for (int x = startX; x <= endX; ++x)
 		{
 			const int blockIndex = y * m_blockWidth + x;
-			const BlockBreakState& breakState = m_blockBreaks[blockIndex];
-			if (!breakState.active || m_blocks[blockIndex].visible == 0)
+			const BlockBreakState& breakState = m_world.blockBreaks[blockIndex];
+			if (!breakState.active || m_world.blocks[blockIndex].visible == 0)
 				continue;
 
 			DrawBlockCrackPattern(x, y, breakState.progress);
 		}
 	}
 
-	for (const RemoteBlockBreakState& remoteBreak : m_remoteBlockBreaks)
+	for (const RemoteBlockBreakState& remoteBreak : m_networkState.remoteBlockBreaks)
 	{
 		if (!remoteBreak.active)
 			continue;
@@ -581,7 +581,7 @@ void GameEngine::DrawBlockCracks()
 			continue;
 
 		const int blockIndex = remoteBreak.tileY * m_blockWidth + remoteBreak.tileX;
-		if (m_blocks[blockIndex].visible == 0)
+		if (m_world.blocks[blockIndex].visible == 0)
 			continue;
 
 		DrawBlockCrackPattern(remoteBreak.tileX, remoteBreak.tileY, remoteBreak.progress);
@@ -816,7 +816,7 @@ void GameEngine::DrawRemotePlayers()
 		m_playerDrawHeight * 0.5f +
 		(PlayerSpriteFootPixelY / PlayerSpriteFramePixelHeight) * m_playerDrawHeight;
 
-	for (const RemotePlayerState& remotePlayer : m_remotePlayers)
+	for (const RemotePlayerState& remotePlayer : m_networkState.remotePlayers)
 	{
 		if (!remotePlayer.active)
 			continue;
@@ -920,8 +920,10 @@ void GameEngine::DrawPlayerAttackMotion()
 	const float windup = std::sin(attackProgress * 3.1415926f);
 	const float snap = std::sin(attackProgress * 6.2831853f);
 	const float face = static_cast<float>(m_player.facing);
-	const bool swordEquipped = m_selectedInventorySlot == SlotSword && m_inventoryCounts[SlotSword] > 0;
-	const bool axeEquipped = m_selectedInventorySlot == SlotAxe && m_inventoryCounts[SlotAxe] > 0;
+	const int selectedItem = GetSelectedInventoryItem();
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	const bool swordEquipped = selectedItem == SlotSword && m_inventory.GetSlotCount(selectedSlot) > 0;
+	const bool axeEquipped = selectedItem == SlotAxe && m_inventory.GetSlotCount(selectedSlot) > 0;
 	const float handX = m_player.x - m_cameraX + face * (12.0f + windup * 11.0f);
 	const float handY = m_player.y - m_cameraY + 9.0f - windup * 1.8f;
 
@@ -1077,8 +1079,10 @@ void GameEngine::DrawInventory()
 		return textureHeight * renderedHeight / UiInventoryFrameHeight;
 	};
 
-	const int pageCount = (InventorySlotCount + InventoryVisibleSlotCount - 1) / InventoryVisibleSlotCount;
-	const int currentPage = std::clamp(m_selectedInventorySlot / InventoryVisibleSlotCount, 0, (std::max)(0, pageCount - 1));
+	const int pageCount = InventoryPageCount;
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	const int dragSlot = m_inventory.GetDragSlot();
+	const int currentPage = std::clamp(selectedSlot / InventoryVisibleSlotCount, 0, (std::max)(0, pageCount - 1));
 	const int firstSlot = currentPage * InventoryVisibleSlotCount;
 	const int lastSlot = (std::min)(InventorySlotCount, firstSlot + InventoryVisibleSlotCount);
 	const float cellWidth = frameW(InventoryCellWidth);
@@ -1095,8 +1099,11 @@ void GameEngine::DrawInventory()
 		const int row = visibleSlot / InventoryVisibleColumns;
 		const float slotX = frameX(InventoryGridX + static_cast<float>(column) * InventoryCellWidth + InventoryCellWidth * 0.5f);
 		const float slotY = frameY(InventoryGridY + static_cast<float>(row) * InventoryCellHeight + InventoryCellHeight * 0.5f);
-		const bool selected = slot == m_selectedInventorySlot;
+		const bool selected = slot == selectedSlot;
 		const bool hovered = slot == hoveredSlot;
+		const int item = GetInventorySlotItem(slot);
+		const int count = m_inventory.GetSlotCount(slot);
+		const float iconAlpha = slot == dragSlot ? 0.34f : 1.0f;
 
 		if (hovered)
 		{
@@ -1120,33 +1127,25 @@ void GameEngine::DrawInventory()
 			m_renderer->DrawRectOutline(selectionDesc);
 		}
 
-		if (IsInventoryWeaponSlot(slot))
+		if (item != InventoryEmptyItem)
 		{
-			DrawWeaponIcon(slotX, slotY + cellHeight * 0.18f, slotIconSize, -7.4f, m_inventoryCounts[slot] > 0 ? 1.0f : 0.24f, slot);
-		}
-		else if (IsInventoryBlockSlot(slot))
-		{
-			SpriteDesc blockDesc;
-			blockDesc.textureFile = BlockAtlasTexture;
-			blockDesc.positionX = slotX;
-			blockDesc.positionY = slotY + cellHeight * 0.18f;
-			blockDesc.width = slotIconSize;
-			blockDesc.height = slotIconSize;
-			blockDesc.atlasColumns = BlockAtlasColumns;
-			blockDesc.atlasRows = BlockAtlasRows;
-			blockDesc.tileIndex = InventoryTileIndices[slot];
-			blockDesc.colorA = m_inventoryCounts[slot] > 0 ? 1.0f : 0.28f;
-			blockDesc.depth = -7.4f;
-			m_renderer->DrawSprite(blockDesc);
+			DrawInventoryItemIcon(item, slotX, slotY + cellHeight * 0.18f, slotIconSize, -7.4f, iconAlpha);
 		}
 
-		if (m_inventoryCounts[slot] > 0)
+		if (count > 0)
 		{
 			char countText[8] = {};
-			std::snprintf(countText, sizeof(countText), "%d", m_inventoryCounts[slot]);
+			std::snprintf(countText, sizeof(countText), "%d", count);
 			DrawUiText(slotX - GetUiTextWidth(countText, 1.10f) * 0.5f, slotY - cellHeight * 0.25f, countText, 1.10f,
-				UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, 1.0f, -8.0f);
+				UiThemeCreamR, UiThemeCreamG, UiThemeCreamB, slot == dragSlot ? 0.42f : 1.0f, -8.0f);
 		}
+	}
+
+	if (dragSlot >= 0 && hoveredSlot >= 0 && IsKeyHeld(VK_LBUTTON))
+	{
+		const int draggedItem = GetInventorySlotItem(dragSlot);
+		if (draggedItem != InventoryEmptyItem)
+			DrawInventoryItemIcon(draggedItem, cursorX, cursorY, slotIconSize, -12.6f, 0.92f);
 	}
 
 	char pageText[16] = {};
@@ -1244,6 +1243,100 @@ void GameEngine::DrawWeaponIcon(float centerX, float centerY, float size, float 
 	handleDesc.colorA = alpha;
 	handleDesc.depth = depth - 0.1f;
 	m_renderer->DrawSprite(handleDesc);
+}
+
+void GameEngine::DrawTeleportPotionIcon(float centerX, float centerY, float size, float depth, float alpha)
+{
+	SpriteDesc corkDesc;
+	corkDesc.textureFile = nullptr;
+	corkDesc.positionX = centerX;
+	corkDesc.positionY = centerY + size * 0.33f;
+	corkDesc.width = size * 0.22f;
+	corkDesc.height = size * 0.16f;
+	corkDesc.colorR = 0.50f;
+	corkDesc.colorG = 0.28f;
+	corkDesc.colorB = 0.12f;
+	corkDesc.colorA = alpha;
+	corkDesc.depth = depth - 0.08f;
+	m_renderer->DrawSprite(corkDesc);
+
+	SpriteDesc neckDesc = corkDesc;
+	neckDesc.positionY = centerY + size * 0.18f;
+	neckDesc.width = size * 0.28f;
+	neckDesc.height = size * 0.22f;
+	neckDesc.colorR = 0.52f;
+	neckDesc.colorG = 0.88f;
+	neckDesc.colorB = 0.96f;
+	neckDesc.colorA = alpha * 0.78f;
+	neckDesc.depth = depth - 0.06f;
+	m_renderer->DrawSprite(neckDesc);
+
+	SpriteDesc bodyDesc = neckDesc;
+	bodyDesc.positionY = centerY - size * 0.08f;
+	bodyDesc.width = size * 0.58f;
+	bodyDesc.height = size * 0.48f;
+	bodyDesc.colorR = 0.40f;
+	bodyDesc.colorG = 0.78f;
+	bodyDesc.colorB = 0.98f;
+	bodyDesc.colorA = alpha * 0.82f;
+	bodyDesc.depth = depth - 0.04f;
+	m_renderer->DrawSprite(bodyDesc);
+
+	SpriteDesc liquidDesc = bodyDesc;
+	liquidDesc.positionY = centerY - size * 0.16f;
+	liquidDesc.width = size * 0.50f;
+	liquidDesc.height = size * 0.28f;
+	liquidDesc.colorR = 0.44f;
+	liquidDesc.colorG = 0.30f;
+	liquidDesc.colorB = 0.96f;
+	liquidDesc.colorA = alpha;
+	liquidDesc.depth = depth - 0.10f;
+	m_renderer->DrawSprite(liquidDesc);
+
+	SpriteDesc shineDesc = bodyDesc;
+	shineDesc.positionX = centerX - size * 0.15f;
+	shineDesc.positionY = centerY + size * 0.02f;
+	shineDesc.width = size * 0.08f;
+	shineDesc.height = size * 0.28f;
+	shineDesc.colorR = 0.92f;
+	shineDesc.colorG = 1.0f;
+	shineDesc.colorB = 1.0f;
+	shineDesc.colorA = alpha * 0.68f;
+	shineDesc.depth = depth - 0.12f;
+	m_renderer->DrawSprite(shineDesc);
+}
+
+void GameEngine::DrawInventoryItemIcon(int item, float centerX, float centerY, float size, float depth, float alpha)
+{
+	const InventoryItemKind kind = GetInventoryItemKind(item);
+	if (kind == InventoryItemKind::Equipment)
+	{
+		DrawWeaponIcon(centerX, centerY, size, depth, alpha, item);
+		return;
+	}
+
+	if (item == SlotTeleportPotion)
+	{
+		DrawTeleportPotionIcon(centerX, centerY, size, depth, alpha);
+		return;
+	}
+
+	if ((kind == InventoryItemKind::TerrainBlock || kind == InventoryItemKind::Furniture) &&
+		item >= 0 && item < BlockInventorySlotCount)
+	{
+		SpriteDesc blockDesc;
+		blockDesc.textureFile = BlockAtlasTexture;
+		blockDesc.positionX = centerX;
+		blockDesc.positionY = centerY;
+		blockDesc.width = size;
+		blockDesc.height = size;
+		blockDesc.atlasColumns = BlockAtlasColumns;
+		blockDesc.atlasRows = BlockAtlasRows;
+		blockDesc.tileIndex = InventoryTileIndices[item];
+		blockDesc.colorA = alpha;
+		blockDesc.depth = depth;
+		m_renderer->DrawSprite(blockDesc);
+	}
 }
 
 void GameEngine::DrawMinimap()
@@ -1428,7 +1521,7 @@ void GameEngine::DrawMinimap()
 			for (int tileX = startTileX; tileX <= endTileX; tileX += sampleStep)
 			{
 				const int sampleX = (tileX - startTileX) / sampleStep;
-				const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+				const BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
 				if (!IsMapTileRevealed(tileX, tileY) || tile.visible == 0)
 				{
 					flushRun();
@@ -1576,8 +1669,10 @@ void GameEngine::DrawPlayerStatsPanel()
 		DrawUiText(x, y, text, size, colorR, colorG, colorB, 1.0f, -8.0f);
 	};
 
-	const bool hasEquipment = IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0;
-	const EquipmentStats equipment = hasEquipment ? GetEquipmentStatsForSlot(m_selectedInventorySlot) : EquipmentStats{ "맨손", "기본", 0, 0, 1.0f };
+	const int selectedItem = GetSelectedInventoryItem();
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	const bool hasEquipment = IsInventoryWeaponSlot(selectedSlot) && m_inventory.GetSlotCount(selectedSlot) > 0;
+	const EquipmentStats equipment = hasEquipment ? GetEquipmentStatsForSlot(selectedItem) : EquipmentStats{ "맨손", "기본", 0, 0, 1.0f };
 
 	char hpText[32] = {};
 	char attackText[32] = {};
@@ -1613,8 +1708,11 @@ void GameEngine::DrawEquipmentTooltip()
 	const int slot = GetInventorySlotAt(cursorX, cursorY);
 	if (!IsInventoryWeaponSlot(slot))
 		return;
+	if (m_inventory.GetSlotCount(slot) <= 0)
+		return;
 
-	const EquipmentStats stats = GetEquipmentStatsForSlot(slot);
+	const int item = GetInventorySlotItem(slot);
+	const EquipmentStats stats = GetEquipmentStatsForSlot(item);
 	if (stats.name[0] == '\0')
 		return;
 
@@ -1633,7 +1731,6 @@ void GameEngine::DrawEquipmentTooltip()
 
 	const float centerX = left + panelWidth * 0.5f;
 	const float centerY = top - panelHeight * 0.5f;
-	const bool owned = m_inventoryCounts[slot] > 0;
 	constexpr float tooltipIconDepth = -11.8f;
 	constexpr float tooltipTextShadowDepth = -11.9f;
 	constexpr float tooltipTextDepth = -12.2f;
@@ -1647,7 +1744,7 @@ void GameEngine::DrawEquipmentTooltip()
 	tooltipDesc.colorR = 1.0f;
 	tooltipDesc.colorG = 1.0f;
 	tooltipDesc.colorB = 1.0f;
-	tooltipDesc.colorA = owned ? 1.0f : 0.78f;
+	tooltipDesc.colorA = 1.0f;
 	tooltipDesc.depth = -11.2f;
 	m_renderer->DrawSprite(tooltipDesc);
 
@@ -1665,11 +1762,11 @@ void GameEngine::DrawEquipmentTooltip()
 	std::snprintf(defenseText, sizeof(defenseText), "방어 +%d", stats.defenseBonus);
 	std::snprintf(chopText, sizeof(chopText), "벌목 %.1f배", stats.chopSpeedMultiplier);
 
-	DrawWeaponIcon(left + 21.0f, top - 25.0f, 30.0f, tooltipIconDepth, owned ? 1.0f : 0.34f, slot);
+	DrawWeaponIcon(left + 21.0f, top - 25.0f, 30.0f, tooltipIconDepth, 1.0f, item);
 	drawTipText(left + 43.0f, top - 14.0f, stats.name, 1.9f,
-		owned ? UiThemeCreamR : UiThemeMutedR, owned ? UiThemeCreamG : UiThemeMutedG, owned ? UiThemeCreamB : UiThemeMutedB);
-	drawTipText(left + 43.0f, top - 32.0f, owned ? "사용 가능" : "없음", 1.35f,
-		owned ? 0.76f : 0.56f, owned ? 0.70f : 0.52f, owned ? 0.64f : 0.50f);
+		UiThemeCreamR, UiThemeCreamG, UiThemeCreamB);
+	drawTipText(left + 43.0f, top - 32.0f, "사용 가능", 1.35f,
+		0.76f, 0.70f, 0.64f);
 	drawTipText(left + 12.0f, top - 53.0f, attackText, 1.45f, 0.80f, 0.72f, 0.64f);
 	drawTipText(left + 12.0f, top - 68.0f, defenseText, 1.45f, 0.80f, 0.72f, 0.64f);
 	drawTipText(left + 12.0f, top - 83.0f, chopText, 1.45f, 0.74f, 0.68f, 0.62f);
@@ -1954,17 +2051,21 @@ void GameEngine::DrawDebugLogPanel()
 	}
 
 	char selectedText[80] = {};
-	const char* selectedName = IsInventoryBlockSlot(m_selectedInventorySlot) ? "블록" : "빈칸";
-	if (m_selectedInventorySlot == SlotSword)
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	const char* selectedName = IsInventoryBlockSlot(selectedSlot) ? "블록" : "빈칸";
+	const int selectedItem = GetSelectedInventoryItem();
+	if (selectedItem == SlotSword)
 		selectedName = "검";
-	else if (m_selectedInventorySlot == SlotAxe)
+	else if (selectedItem == SlotAxe)
 		selectedName = "도끼";
-	else if (m_selectedInventorySlot == SlotCraftingTable)
+	else if (selectedItem == SlotTeleportPotion)
+		selectedName = "텔레포트 물약";
+	else if (selectedItem == SlotCraftingTable)
 		selectedName = "작업대";
 	std::snprintf(selectedText, sizeof(selectedText), "슬롯 %d  %s  수량 %d",
-		m_selectedInventorySlot + 1,
+		selectedSlot + 1,
 		selectedName,
-		m_inventoryCounts[m_selectedInventorySlot]);
+		m_inventory.GetSlotCount(selectedSlot));
 	drawLine(selectedText, UiThemeMutedR, UiThemeMutedG, UiThemeMutedB);
 }
 
@@ -2508,8 +2609,8 @@ int GameEngine::GetInventorySlotAt(float viewX, float viewY) const
 	if (column < 0 || column >= InventoryVisibleColumns || row < 0 || row >= InventoryVisibleRows)
 		return -1;
 
-	const int pageCount = (InventorySlotCount + InventoryVisibleSlotCount - 1) / InventoryVisibleSlotCount;
-	const int currentPage = std::clamp(m_selectedInventorySlot / InventoryVisibleSlotCount, 0, (std::max)(0, pageCount - 1));
+	const int pageCount = InventoryPageCount;
+	const int currentPage = std::clamp(m_inventory.GetSelectedSlot() / InventoryVisibleSlotCount, 0, (std::max)(0, pageCount - 1));
 	const int slot = currentPage * InventoryVisibleSlotCount + row * InventoryVisibleColumns + column;
 	return slot < InventorySlotCount ? slot : -1;
 }
@@ -2534,8 +2635,11 @@ void GameEngine::DrawHoveredBlockOutline()
 		return;
 
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	const bool occupied = m_blocks[blockIndex].visible != 0;
+	const bool occupied = m_world.blocks[blockIndex].visible != 0;
 	const bool canPlace = CanPlaceSelectedBlockAt(tileX, tileY);
+
+	if (occupied && !IsTileInBlockInteractionRange(tileX, tileY))
+		return;
 
 	if (!occupied && !canPlace)
 		return;
@@ -2556,3 +2660,5 @@ void GameEngine::DrawHoveredBlockOutline()
 
 	m_renderer->DrawRectOutline(outlineDesc);
 }
+
+

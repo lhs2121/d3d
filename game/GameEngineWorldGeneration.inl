@@ -1,16 +1,16 @@
-// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
+﻿// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
 
 void GameEngine::InitializeWorld()
 {
-	m_blocks.assign(m_blockWidth * m_blockHeight, BlockTile{});
-	m_blockBreaks.assign(m_blockWidth * m_blockHeight, BlockBreakState{});
-	m_surfaceHeights.clear();
-	m_biomes.clear();
-	m_revealedTiles.assign(static_cast<size_t>(m_blockWidth * m_blockHeight), 0);
+	m_world.blocks.assign(m_blockWidth * m_blockHeight, BlockTile{});
+	m_world.blockBreaks.assign(m_blockWidth * m_blockHeight, BlockBreakState{});
+	m_world.surfaceHeights.clear();
+	m_world.biomes.clear();
+	m_world.revealedTiles.assign(static_cast<size_t>(m_blockWidth * m_blockHeight), 0);
 	m_monsters.clear();
 	m_droppedItems.clear();
 	m_leafParticles.clear();
-	m_remoteBlockBreaks.clear();
+	m_networkState.remoteBlockBreaks.clear();
 	m_monsterQueryScratch.clear();
 	m_monsterOverlapScratch.clear();
 	m_minimapRuns.clear();
@@ -109,16 +109,16 @@ void GameEngine::InitializeWorld()
 		surfaceHeights[x] = spawnSurfaceY + (distance > 6 ? (distance - 6) / 4 : 0);
 		biomes[x] = BiomeGrassland;
 	}
-	m_surfaceHeights = surfaceHeights;
-	m_biomes.resize(m_blockWidth);
+	m_world.surfaceHeights = surfaceHeights;
+	m_world.biomes.resize(m_blockWidth);
 	for (int x = 0; x < m_blockWidth; ++x)
-		m_biomes[x] = static_cast<unsigned char>(biomes[x]);
+		m_world.biomes[x] = static_cast<unsigned char>(biomes[x]);
 
 	for (int y = 0; y < m_blockHeight; ++y)
 	{
 		for (int x = 0; x < m_blockWidth; ++x)
 		{
-			BlockTile& tile = m_blocks[y * m_blockWidth + x];
+			BlockTile& tile = m_world.blocks[y * m_blockWidth + x];
 			const int surfaceY = surfaceHeights[x];
 			const BiomeType biome = biomes[x];
 
@@ -327,7 +327,7 @@ void GameEngine::InitializeWorld()
 		for (int x = 0; x < m_blockWidth; ++x)
 		{
 			if (caveMask[y * m_blockWidth + x] != 0)
-				m_blocks[y * m_blockWidth + x].visible = 0;
+				m_world.blocks[y * m_blockWidth + x].visible = 0;
 		}
 	}
 
@@ -336,7 +336,7 @@ void GameEngine::InitializeWorld()
 		if (!IsTileInBounds(tileX, tileY) || tileY < surfaceHeights[tileX])
 			return;
 
-		BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+		BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
 		const int depth = tileY - surfaceHeights[tileX];
 		const BiomeType biome = biomes[tileX];
 		const float layerNoise = FractalNoise2D(tileX * 0.11f, tileY * 0.11f, seed + 503u, 3, 2.0f, 0.55f);
@@ -367,7 +367,7 @@ void GameEngine::InitializeWorld()
 				for (int x = 1; x < m_blockWidth - 1; ++x)
 				{
 					const int blockIndex = y * m_blockWidth + x;
-					if (m_blocks[blockIndex].visible != 0 || y <= surfaceHeights[x] + 10)
+					if (m_world.blocks[blockIndex].visible != 0 || y <= surfaceHeights[x] + 10)
 						continue;
 
 					int solidNeighbors = 0;
@@ -379,7 +379,7 @@ void GameEngine::InitializeWorld()
 								continue;
 
 							const int neighborIndex = (y + oy) * m_blockWidth + (x + ox);
-							solidNeighbors += m_blocks[neighborIndex].visible != 0 ? 1 : 0;
+							solidNeighbors += m_world.blocks[neighborIndex].visible != 0 ? 1 : 0;
 						}
 					}
 
@@ -425,7 +425,7 @@ void GameEngine::InitializeWorld()
 				const float dx = (static_cast<float>(x) - centerX) / radiusX;
 				const float dy = (static_cast<float>(y) - centerY) / radiusY;
 				if (dx * dx + dy * dy <= 1.0f)
-					m_blocks[y * m_blockWidth + x].visible = 0;
+					m_world.blocks[y * m_blockWidth + x].visible = 0;
 			}
 		}
 	};
@@ -580,7 +580,7 @@ void GameEngine::InitializeWorld()
 				for (int y = (std::max)(0, surfaceHeights[tileX] - 1);
 					y <= surfaceHeights[tileX] + openDepth && y < m_blockHeight - 1; ++y)
 				{
-					m_blocks[y * m_blockWidth + tileX].visible = 0;
+					m_world.blocks[y * m_blockWidth + tileX].visible = 0;
 				}
 			}
 
@@ -860,7 +860,7 @@ void GameEngine::InitializeWorld()
 				return;
 
 			const int index = tileY * m_blockWidth + tileX;
-			if (connected[index] != 0 || m_blocks[index].visible == 0)
+			if (connected[index] != 0 || m_world.blocks[index].visible == 0)
 				return;
 
 			connected[index] = 1;
@@ -901,7 +901,7 @@ void GameEngine::InitializeWorld()
 				return;
 
 			const int index = tileY * m_blockWidth + tileX;
-			if (visited[index] != 0 || m_blocks[index].visible == 0)
+			if (visited[index] != 0 || m_world.blocks[index].visible == 0)
 				return;
 
 			visited[index] = 1;
@@ -910,7 +910,7 @@ void GameEngine::InitializeWorld()
 
 		for (int index = 0; index < tileCount; ++index)
 		{
-			if (visited[index] != 0 || m_blocks[index].visible == 0)
+			if (visited[index] != 0 || m_world.blocks[index].visible == 0)
 				continue;
 
 			queue.clear();
@@ -934,7 +934,7 @@ void GameEngine::InitializeWorld()
 			if (component.size() <= MaxDetachedDebrisTiles)
 			{
 				for (int detachedIndex : component)
-					m_blocks[detachedIndex].visible = 0;
+					m_world.blocks[detachedIndex].visible = 0;
 			}
 		}
 	};
@@ -970,7 +970,7 @@ void GameEngine::InitializeWorld()
 					if (dx * dx + dy * dy > 1.0f)
 						continue;
 
-					BlockTile& tile = m_blocks[y * m_blockWidth + x];
+					BlockTile& tile = m_world.blocks[y * m_blockWidth + x];
 					if (tile.visible != 0 && IsStoneLikeTile(tile.tileIndex))
 						tile.tileIndex = biomes[x] == BiomeIce ? BlockCrystalOre : BlockOre;
 				}
@@ -992,7 +992,7 @@ void GameEngine::InitializeWorld()
 		if (!IsTileInBounds(tileX, tileY))
 			return;
 
-		BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+		BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
 		if (tile.visible != 0)
 			return;
 
@@ -1000,13 +1000,13 @@ void GameEngine::InitializeWorld()
 		tile.tileIndex = tileIndex;
 	};
 
-	auto isTreeTile = [this](int tileX, int tileY)
+	auto isLeafTile = [this](int tileX, int tileY)
 	{
 		if (!IsTileInBounds(tileX, tileY))
 			return false;
 
-		const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
-		return tile.visible != 0 && (tile.tileIndex == BlockWood || tile.tileIndex == BlockLeaves);
+		const BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
+		return tile.visible != 0 && tile.tileIndex == BlockLeaves;
 	};
 
 	auto hasTreeSupport = [this](int tileX, int surfaceY)
@@ -1028,7 +1028,7 @@ void GameEngine::InitializeWorld()
 			if (!IsTileInBounds(tileX, trunkY))
 				return false;
 
-			const BlockTile& tile = m_blocks[trunkY * m_blockWidth + tileX];
+			const BlockTile& tile = m_world.blocks[trunkY * m_blockWidth + tileX];
 			if (tile.visible != 0)
 				return false;
 		}
@@ -1042,29 +1042,40 @@ void GameEngine::InitializeWorld()
 			return;
 
 		const int anchorIndex = tileY * m_blockWidth + tileX;
-		const BlockTile& tile = m_blocks[anchorIndex];
+		const BlockTile& tile = m_world.blocks[anchorIndex];
 		if (tile.visible != 0 && tile.tileIndex == BlockWood)
 			leafAnchors.push_back(anchorIndex);
 	};
 
 	auto placeConnectedCanopy = [&](const std::vector<int>& leafAnchors, BiomeType biome)
 	{
-		for (int anchorIndex : leafAnchors)
+		if (leafAnchors.empty())
+			return;
+
+		const int trunkAnchorX = leafAnchors.front() % m_blockWidth;
+
+		for (size_t anchorSlot = 0; anchorSlot < leafAnchors.size(); ++anchorSlot)
 		{
+			const int anchorIndex = leafAnchors[anchorSlot];
 			const int anchorX = anchorIndex % m_blockWidth;
 			const int anchorY = anchorIndex / m_blockWidth;
-			const int radius = biome == BiomeIce ? randomInt(2, 3) : randomInt(2, 4);
-			const int topReach = radius;
-			const int bottomReach = biome == BiomeIce ? 1 : randomInt(1, 2);
+			const int direction = anchorX > trunkAnchorX ? 1 : (anchorX < trunkAnchorX ? -1 : 0);
+			const bool branchCanopy = anchorSlot > 0 && direction != 0;
+			const int centerX = anchorX + (branchCanopy ? direction : 0);
+			const int radius = branchCanopy ? (biome == BiomeIce ? 2 : randomInt(2, 3)) : (biome == BiomeIce ? randomInt(2, 3) : randomInt(3, 4));
+			const int topReach = branchCanopy ? randomInt(1, 2) : radius;
+			const int bottomReach = branchCanopy ? 1 : (biome == BiomeIce ? 1 : randomInt(1, 2));
 
 			for (int leafY = anchorY - topReach; leafY <= anchorY + bottomReach; ++leafY)
 			{
-				for (int leafX = anchorX - radius; leafX <= anchorX + radius; ++leafX)
+				for (int leafX = centerX - radius; leafX <= centerX + radius; ++leafX)
 				{
-					const int dx = std::abs(leafX - anchorX);
+					const int dx = std::abs(leafX - centerX);
 					const int dy = std::abs(leafY - anchorY);
 					const int allowedWidth = radius - (dy > 1 ? dy - 1 : 0);
 					if (allowedWidth < 0 || dx > allowedWidth)
+						continue;
+					if (branchCanopy && dx == allowedWidth && randomInt(0, 99) < 22)
 						continue;
 
 					setSkyBlock(leafX, leafY, BlockLeaves);
@@ -1072,29 +1083,33 @@ void GameEngine::InitializeWorld()
 			}
 		}
 
-		for (int anchorIndex : leafAnchors)
+		for (size_t anchorSlot = 0; anchorSlot < leafAnchors.size(); ++anchorSlot)
 		{
+			const int anchorIndex = leafAnchors[anchorSlot];
 			const int anchorX = anchorIndex % m_blockWidth;
 			const int anchorY = anchorIndex / m_blockWidth;
-			const int fringeRadius = biome == BiomeIce ? 3 : 4;
+			const int direction = anchorX > trunkAnchorX ? 1 : (anchorX < trunkAnchorX ? -1 : 0);
+			const bool branchCanopy = anchorSlot > 0 && direction != 0;
+			const int centerX = anchorX + (branchCanopy ? direction : 0);
+			const int fringeRadius = branchCanopy ? (biome == BiomeIce ? 3 : 4) : (biome == BiomeIce ? 3 : 4);
 
 			for (int leafY = anchorY - fringeRadius; leafY <= anchorY + 2; ++leafY)
 			{
-				for (int leafX = anchorX - fringeRadius; leafX <= anchorX + fringeRadius; ++leafX)
+				for (int leafX = centerX - fringeRadius; leafX <= centerX + fringeRadius; ++leafX)
 				{
 					if (!IsTileInBounds(leafX, leafY))
 						continue;
 
-					BlockTile& tile = m_blocks[leafY * m_blockWidth + leafX];
+					BlockTile& tile = m_world.blocks[leafY * m_blockWidth + leafX];
 					if (tile.visible != 0)
 						continue;
 
-					const int distance = std::abs(leafX - anchorX) + std::abs(leafY - anchorY);
-					if (distance > fringeRadius + 1 || randomInt(0, 99) < 62)
+					const int distance = std::abs(leafX - centerX) + std::abs(leafY - anchorY);
+					if (distance > fringeRadius + 1 || randomInt(0, 99) < (branchCanopy ? 70 : 64))
 						continue;
 
-					if (isTreeTile(leafX - 1, leafY) || isTreeTile(leafX + 1, leafY) ||
-						isTreeTile(leafX, leafY - 1) || isTreeTile(leafX, leafY + 1))
+					if (isLeafTile(leafX - 1, leafY) || isLeafTile(leafX + 1, leafY) ||
+						isLeafTile(leafX, leafY - 1) || isLeafTile(leafX, leafY + 1))
 					{
 						tile.visible = 1;
 						tile.tileIndex = BlockLeaves;
@@ -1184,7 +1199,7 @@ void GameEngine::InitializeWorld()
 			if (!IsTileInBounds(x, y))
 				continue;
 
-			m_blocks[y * m_blockWidth + x].visible = 0;
+			m_world.blocks[y * m_blockWidth + x].visible = 0;
 		}
 	}
 	for (int x = spawnX - spawnSafeRadius; x <= spawnX + spawnSafeRadius; ++x)
@@ -1194,7 +1209,7 @@ void GameEngine::InitializeWorld()
 
 		for (int y = spawnSurfaceY; y <= spawnSurfaceY + 6 && y < m_blockHeight; ++y)
 		{
-			BlockTile& tile = m_blocks[y * m_blockWidth + x];
+			BlockTile& tile = m_world.blocks[y * m_blockWidth + x];
 			tile.visible = 1;
 			const int depth = y - spawnSurfaceY;
 			const float layerNoise = FractalNoise2D(x * 0.11f, y * 0.11f, seed + 503u, 3, 2.0f, 0.55f);
@@ -1206,7 +1221,7 @@ void GameEngine::InitializeWorld()
 	const int tableY = surfaceHeights[tableX] - 1;
 	if (IsTileInBounds(tableX, tableY))
 	{
-		BlockTile& tableTile = m_blocks[tableY * m_blockWidth + tableX];
+		BlockTile& tableTile = m_world.blocks[tableY * m_blockWidth + tableX];
 		tableTile.visible = 1;
 		tableTile.tileIndex = BlockCraftingTable;
 	}
@@ -1249,8 +1264,8 @@ void GameEngine::InitializeWorld()
 		monster.facing = tileX < spawnX ? 1 : -1;
 		monster.health = underground ? 48 : 40;
 		monster.maxHealth = monster.health;
-		monster.biome = m_biomes.empty() ? static_cast<unsigned char>(BiomeGrassland) :
-			static_cast<unsigned char>(std::clamp(static_cast<int>(m_biomes[tileX]), 0, BackgroundBiomeCount - 1));
+		monster.biome = m_world.biomes.empty() ? static_cast<unsigned char>(BiomeGrassland) :
+			static_cast<unsigned char>(std::clamp(static_cast<int>(m_world.biomes[tileX]), 0, BackgroundBiomeCount - 1));
 		monster.alive = true;
 		monster.onGround = true;
 		monster.underground = underground;
@@ -1307,8 +1322,9 @@ void GameEngine::InitializeWorld()
 	m_monsterOverlapScratch.reserve(m_monsters.size());
 	InitializeBlockChunkCache();
 
-	m_inventoryCounts = { 12, 48, 48, 8, 48, 24, 32, 1, 0, 0 };
-	m_selectedInventorySlot = 0;
+	m_inventory.Clear();
+	const int teleportPotionSlot = AddInventoryItem(SlotTeleportPotion, 1);
+	m_inventory.SetSelectedSlot(teleportPotionSlot >= 0 ? teleportPotionSlot : 0);
 	m_playerHealth = GetPlayerMaxHealth();
 	m_playerInvulnerableTimer = 0.0f;
 	m_playerHurtFlashTimer = 0.0f;
@@ -1316,7 +1332,7 @@ void GameEngine::InitializeWorld()
 	m_playerKnockbackCooldownTimer = 0.0f;
 	m_attackCooldown = 0.0f;
 	m_attackTimer = 0.0f;
-	SetStatusText("제작창에서 만들 수 있어요", 2.6f);
+	SetStatusText("텔레포트 물약", 2.0f);
 
 	const float groundTop = TileTop(spawnSurfaceY);
 	m_player.x = m_worldOriginX + spawnX * m_tileSize;
@@ -1331,17 +1347,17 @@ void GameEngine::InitializeWorld()
 	m_cameraX = m_player.x;
 	m_cameraY = m_player.y;
 	UpdateMapReveal();
-	if (!m_pendingNetworkTileEdits.empty())
+	if (!m_networkState.pendingTileEdits.empty())
 	{
-		const std::vector<NetworkTileEditState> pendingEdits = m_pendingNetworkTileEdits;
-		m_pendingNetworkTileEdits.clear();
+		const std::vector<NetworkTileEditState> pendingEdits = m_networkState.pendingTileEdits;
+		m_networkState.pendingTileEdits.clear();
 		for (const NetworkTileEditState& edit : pendingEdits)
 			ApplyNetworkTileEdit(edit.tileX, edit.tileY, edit.tileIndex, edit.visible);
 	}
-	if (!m_pendingNetworkDroppedItems.empty())
+	if (!m_networkState.pendingDroppedItems.empty())
 	{
-		const std::vector<DroppedItemState> pendingItems = m_pendingNetworkDroppedItems;
-		m_pendingNetworkDroppedItems.clear();
+		const std::vector<DroppedItemState> pendingItems = m_networkState.pendingDroppedItems;
+		m_networkState.pendingDroppedItems.clear();
 		for (const DroppedItemState& item : pendingItems)
 		{
 			ApplyNetworkDroppedItemState(item.networkId, 0, item.pickupPlayerId, item.x, item.y, item.velocityX, item.velocityY,
@@ -1349,3 +1365,5 @@ void GameEngine::InitializeWorld()
 		}
 	}
 }
+
+

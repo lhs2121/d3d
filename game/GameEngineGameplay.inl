@@ -1,8 +1,8 @@
-// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
+﻿// Included by GameEngine.cpp. Shares its private class declarations and file-local helpers.
 
 void GameEngine::UpdateMapReveal()
 {
-	if (m_debugRevealMap || m_revealedTiles.size() != m_blocks.size())
+	if (m_debugRevealMap || m_world.revealedTiles.size() != m_world.blocks.size())
 		return;
 
 	const int centerTileX = std::clamp(WorldToTileX(m_player.x), 0, m_blockWidth - 1);
@@ -25,10 +25,10 @@ void GameEngine::UpdateMapReveal()
 				continue;
 
 			const int index = y * m_blockWidth + x;
-			if (m_revealedTiles[index] != 0)
+			if (m_world.revealedTiles[index] != 0)
 				continue;
 
-			m_revealedTiles[index] = 1;
+			m_world.revealedTiles[index] = 1;
 			changed = true;
 		}
 	}
@@ -39,10 +39,10 @@ void GameEngine::UpdateMapReveal()
 
 void GameEngine::RevealAllMap()
 {
-	if (m_revealedTiles.size() != m_blocks.size())
-		m_revealedTiles.assign(m_blocks.size(), 1);
+	if (m_world.revealedTiles.size() != m_world.blocks.size())
+		m_world.revealedTiles.assign(m_world.blocks.size(), 1);
 	else
-		std::fill(m_revealedTiles.begin(), m_revealedTiles.end(), 1);
+		std::fill(m_world.revealedTiles.begin(), m_world.revealedTiles.end(), 1);
 
 	m_debugRevealMap = true;
 	m_minimapExpanded = true;
@@ -53,27 +53,50 @@ void GameEngine::RevealAllMap()
 void GameEngine::UpdateInventoryInput()
 {
 	if (!m_acceptInput)
+	{
+		ClearInventoryDragState();
 		return;
+	}
+
+	float cursorX = 0.0f;
+	float cursorY = 0.0f;
+	const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
+	const int hoveredSlot = hasCursor ? GetInventorySlotAt(cursorX, cursorY) : -1;
+	const bool leftHeld = IsKeyHeld(VK_LBUTTON);
+	const bool leftDown = IsKeyDown(VK_LBUTTON);
+
+	if (m_inventory.GetDragSlot() >= 0)
+	{
+		m_uiConsumesLeftMouse = true;
+		if (leftHeld)
+			return;
+
+		if (hoveredSlot >= 0)
+		{
+			SwapInventorySlots(m_inventory.GetDragSlot(), hoveredSlot);
+			m_inventory.SetSelectedSlot(hoveredSlot);
+		}
+		ClearInventoryDragState();
+		return;
+	}
 
 	constexpr int HotkeySlotCount = 10;
 	for (int slot = 0; slot < HotkeySlotCount; ++slot)
 	{
 		const int keyCode = slot < 9 ? 0x31 + slot : 0x30;
 		if (IsKeyDown(keyCode))
-			m_selectedInventorySlot = slot;
+			m_inventory.SetSelectedSlot(slot);
 	}
 
-	float cursorX = 0.0f;
-	float cursorY = 0.0f;
-	if (GetCursorViewPosition(cursorX, cursorY))
+	if (hoveredSlot >= 0)
 	{
-		const int hoveredSlot = GetInventorySlotAt(cursorX, cursorY);
-		if (hoveredSlot >= 0)
+		if (leftHeld)
+			m_uiConsumesLeftMouse = true;
+		if (leftDown)
 		{
-			if (IsKeyHeld(VK_LBUTTON))
-				m_uiConsumesLeftMouse = true;
-			if (IsKeyDown(VK_LBUTTON))
-				m_selectedInventorySlot = hoveredSlot;
+			m_inventory.SetSelectedSlot(hoveredSlot);
+			if (GetInventorySlotItem(hoveredSlot) != InventoryEmptyItem)
+				m_inventory.BeginDrag(hoveredSlot);
 		}
 	}
 }
@@ -151,10 +174,11 @@ bool GameEngine::CraftSword()
 		return false;
 	}
 
-	m_inventoryCounts[SlotWood] -= 2;
-	m_inventoryCounts[SlotStone] -= 3;
-	++m_inventoryCounts[SlotSword];
-	m_selectedInventorySlot = SlotSword;
+	RemoveInventoryItem(SlotWood, 2);
+	RemoveInventoryItem(SlotStone, 3);
+	const int craftedSlot = AddInventoryItem(SlotSword, 1);
+	if (craftedSlot >= 0)
+		m_inventory.SetSelectedSlot(craftedSlot);
 	SetStatusText("검 제작됨", 1.8f);
 	return true;
 }
@@ -167,10 +191,11 @@ bool GameEngine::CraftAxe()
 		return false;
 	}
 
-	m_inventoryCounts[SlotWood] -= 3;
-	m_inventoryCounts[SlotStone] -= 2;
-	++m_inventoryCounts[SlotAxe];
-	m_selectedInventorySlot = SlotAxe;
+	RemoveInventoryItem(SlotWood, 3);
+	RemoveInventoryItem(SlotStone, 2);
+	const int craftedSlot = AddInventoryItem(SlotAxe, 1);
+	if (craftedSlot >= 0)
+		m_inventory.SetSelectedSlot(craftedSlot);
 	SetStatusText("도끼 제작됨", 1.8f);
 	return true;
 }
@@ -183,9 +208,10 @@ bool GameEngine::CraftTable()
 		return false;
 	}
 
-	m_inventoryCounts[SlotWood] -= 4;
-	++m_inventoryCounts[SlotCraftingTable];
-	m_selectedInventorySlot = SlotCraftingTable;
+	RemoveInventoryItem(SlotWood, 4);
+	const int craftedSlot = AddInventoryItem(SlotCraftingTable, 1);
+	if (craftedSlot >= 0)
+		m_inventory.SetSelectedSlot(craftedSlot);
 	SetStatusText("작업대 제작됨", 1.8f);
 	return true;
 }
@@ -204,6 +230,111 @@ bool GameEngine::CraftRecipe(int recipeIndex)
 		return CraftAxe();
 
 	return false;
+}
+
+int GameEngine::GetInventorySlotItem(int slot) const
+{
+	return m_inventory.GetSlotItem(slot);
+}
+
+int GameEngine::GetSelectedInventoryItem() const
+{
+	return GetInventorySlotItem(m_inventory.GetSelectedSlot());
+}
+
+int GameEngine::GetInventoryItemCount(int item) const
+{
+	if (GetInventoryItemKind(item) == InventoryItemKind::Empty)
+		return 0;
+
+	return m_inventory.GetItemCount(item);
+}
+
+int GameEngine::AddInventoryItem(int item, int amount)
+{
+	if (amount <= 0 || GetInventoryItemKind(item) == InventoryItemKind::Empty)
+		return -1;
+
+	return m_inventory.AddItem(item, amount);
+}
+
+bool GameEngine::RemoveInventoryItem(int item, int amount)
+{
+	if (GetInventoryItemKind(item) == InventoryItemKind::Empty)
+		return false;
+	return m_inventory.RemoveItem(item, amount);
+}
+
+void GameEngine::ClearInventorySlotIfEmpty(int slot)
+{
+	m_inventory.ClearSlotIfEmpty(slot);
+}
+
+void GameEngine::SwapInventorySlots(int firstSlot, int secondSlot)
+{
+	m_inventory.SwapSlots(firstSlot, secondSlot);
+}
+
+void GameEngine::ClearInventoryDragState()
+{
+	m_inventory.ClearDrag();
+}
+
+bool GameEngine::TryUseTeleportPotion()
+{
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	if (GetSelectedInventoryItem() != SlotTeleportPotion || m_inventory.GetSlotCount(selectedSlot) <= 0)
+		return false;
+	if (!IsKeyHeld(VK_LBUTTON))
+		return false;
+	if (m_uiConsumesLeftMouse)
+		return false;
+
+	m_uiConsumesLeftMouse = true;
+	if (!IsKeyDown(VK_LBUTTON))
+		return true;
+
+	const RemotePlayerState* targetPlayer = nullptr;
+	float bestDistanceSq = 3.4e38f;
+	for (const RemotePlayerState& remotePlayer : m_networkState.remotePlayers)
+	{
+		if (!remotePlayer.active)
+			continue;
+
+		const float deltaX = remotePlayer.player.x - m_player.x;
+		const float deltaY = remotePlayer.player.y - m_player.y;
+		const float distanceSq = deltaX * deltaX + deltaY * deltaY;
+		if (distanceSq < bestDistanceSq)
+		{
+			bestDistanceSq = distanceSq;
+			targetPlayer = &remotePlayer;
+		}
+	}
+
+	if (targetPlayer == nullptr)
+	{
+		SetStatusText("순간이동할 플레이어 없음", 1.5f);
+		return true;
+	}
+
+	m_inventory.ConsumeSelected();
+	m_player.x = targetPlayer->player.x;
+	m_player.y = targetPlayer->player.y;
+	m_player.velocityX = 0.0f;
+	m_player.velocityY = 0.0f;
+	m_player.onGround = targetPlayer->player.onGround;
+	m_playerKnockbackTimer = 0.0f;
+	m_playerKnockbackCooldownTimer = 0.0f;
+	m_cameraX = m_player.x;
+	m_cameraY = m_player.y;
+	UpdateMapReveal();
+	SendLocalPlayerState();
+
+	char statusText[64] = {};
+	const char* targetName = targetPlayer->nickname[0] != '\0' ? targetPlayer->nickname.data() : "플레이어";
+	std::snprintf(statusText, sizeof(statusText), "%s에게 순간이동", targetName);
+	SetStatusText(statusText, 1.5f);
+	return true;
 }
 
 void GameEngine::UpdateCrafting(float deltaTime)
@@ -244,10 +375,11 @@ void GameEngine::UpdateCrafting(float deltaTime)
 				if (wheelSteps != 0)
 				{
 					m_inventoryWheelRemainder -= wheelSteps * WHEEL_DELTA;
-					m_selectedInventorySlot -= wheelSteps;
-					m_selectedInventorySlot %= InventorySlotCount;
-					if (m_selectedInventorySlot < 0)
-						m_selectedInventorySlot += InventorySlotCount;
+					int selectedSlot = m_inventory.GetSelectedSlot() - wheelSteps;
+					selectedSlot %= InventorySlotCount;
+					if (selectedSlot < 0)
+						selectedSlot += InventorySlotCount;
+					m_inventory.SetSelectedSlot(selectedSlot);
 				}
 			}
 		}
@@ -300,11 +432,11 @@ void GameEngine::TryPlaceSelectedBlock(float deltaTime)
 		return;
 
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	m_blocks[blockIndex].visible = 1;
-	m_blocks[blockIndex].tileIndex = GetPlacementTileIndexForSlot(m_selectedInventorySlot);
-	m_blockBreaks[blockIndex] = BlockBreakState{};
+	m_world.blocks[blockIndex].visible = 1;
+	m_world.blocks[blockIndex].tileIndex = GetPlacementTileIndexForSlot(GetSelectedInventoryItem());
+	m_world.blockBreaks[blockIndex] = BlockBreakState{};
 	MarkBlockChunkDirty(tileX, tileY);
-	--m_inventoryCounts[m_selectedInventorySlot];
+	m_inventory.ConsumeSelected();
 	PublishLocalTileEdit(tileX, tileY);
 	m_blockPlaceRepeatTimer = BlockPlaceRepeatInterval;
 	m_lastPlacedTileX = tileX;
@@ -335,10 +467,24 @@ void GameEngine::UpdatePlayer(float deltaTime)
 	if (IsKeyHeld(KeyD))
 		move += 1.0f;
 
-	if (move < 0.0f)
+	float cursorViewX = 0.0f;
+	float cursorViewY = 0.0f;
+	if (GetCursorGameViewPosition(cursorViewX, cursorViewY))
+	{
+		const float cursorWorldX = cursorViewX + m_cameraX;
+		if (cursorWorldX < m_player.x - 0.5f)
+			m_player.facing = -1;
+		else if (cursorWorldX > m_player.x + 0.5f)
+			m_player.facing = 1;
+	}
+	else if (move < 0.0f)
+	{
 		m_player.facing = -1;
+	}
 	else if (move > 0.0f)
+	{
 		m_player.facing = 1;
+	}
 
 	const bool knockbackActive = m_playerKnockbackTimer > 0.0f && std::fabs(m_player.velocityX) > 0.01f;
 	const float controlScale = knockbackActive ? 0.35f : 1.0f;
@@ -476,8 +622,9 @@ void GameEngine::TryPlayerAttack()
 
 	m_attackCooldown = 0.34f;
 	m_attackTimer = PlayerAttackDuration;
-	const bool swordEquipped = m_selectedInventorySlot == SlotSword && m_inventoryCounts[SlotSword] > 0;
-	const bool axeEquipped = m_selectedInventorySlot == SlotAxe && m_inventoryCounts[SlotAxe] > 0;
+	const int selectedItem = GetSelectedInventoryItem();
+	const bool swordEquipped = selectedItem == SlotSword && m_inventory.GetSlotCount(m_inventory.GetSelectedSlot()) > 0;
+	const bool axeEquipped = selectedItem == SlotAxe && m_inventory.GetSlotCount(m_inventory.GetSelectedSlot()) > 0;
 	const int attackDamage = GetPlayerAttackDamage();
 
 	const float attackCenterX = m_player.x + m_player.facing * (PlayerAttackRange * 0.48f);
@@ -543,6 +690,24 @@ void GameEngine::UpdateMonsters(float deltaTime)
 			monster.attackCooldown -= deltaTime;
 		if (monster.jumpCooldown > 0.0f)
 			monster.jumpCooldown -= deltaTime;
+		if (monster.jumpMoveTimer > 0.0f)
+		{
+			monster.jumpMoveTimer -= deltaTime;
+			if (monster.jumpMoveTimer <= 0.0f)
+			{
+				monster.jumpMoveTimer = 0.0f;
+				monster.jumpMoveDirection = 0;
+			}
+		}
+		if (monster.chaseFacingLockTimer > 0.0f)
+		{
+			monster.chaseFacingLockTimer -= deltaTime;
+			if (monster.chaseFacingLockTimer <= 0.0f)
+			{
+				monster.chaseFacingLockTimer = 0.0f;
+				monster.chaseFacingDirection = 0;
+			}
+		}
 		if (monster.idleTimer > 0.0f)
 			monster.idleTimer -= deltaTime;
 		if (monster.aiTimer > 0.0f)
@@ -582,9 +747,23 @@ void GameEngine::UpdateMonsters(float deltaTime)
 		if (chasingPlayer)
 		{
 			if (monster.contactTimer > 0.0f && monster.contactDirection != 0)
+			{
 				monster.facing = monster.contactDirection;
+				monster.chaseFacingDirection = monster.contactDirection;
+				monster.chaseFacingLockTimer = 0.18f;
+			}
 			else if (playerDistanceX > MonsterCollisionWidth * 0.35f)
-				monster.facing = playerDeltaX >= 0.0f ? 1 : -1;
+			{
+				const int desiredFacing = playerDeltaX >= 0.0f ? 1 : -1;
+				if (monster.chaseFacingDirection == 0 ||
+					monster.chaseFacingDirection == desiredFacing ||
+					monster.chaseFacingLockTimer <= 0.0f)
+				{
+					monster.chaseFacingDirection = desiredFacing;
+					monster.chaseFacingLockTimer = 0.30f;
+				}
+				monster.facing = monster.chaseFacingDirection != 0 ? monster.chaseFacingDirection : desiredFacing;
+			}
 			monster.idleTimer = 0.0f;
 		}
 		else
@@ -614,32 +793,43 @@ void GameEngine::UpdateMonsters(float deltaTime)
 		if (contactShuffle)
 			monster.facing = monster.contactDirection;
 
-		const bool idle = monster.idleTimer > 0.0f && !chasingPlayer && !contactShuffle;
+		const bool jumpMoving = monster.jumpMoveTimer > 0.0f && monster.jumpMoveDirection != 0;
+		const bool idle = monster.idleTimer > 0.0f && !chasingPlayer && !contactShuffle && !jumpMoving;
+		const int moveDirection = jumpMoving ? monster.jumpMoveDirection : monster.facing;
 		float speedMultiplier = chasingPlayer ? (monster.underground ? 1.28f : 1.12f) : (monster.underground ? 0.82f : 0.68f);
 		if (contactShuffle)
 			speedMultiplier = monster.underground ? 1.42f : 1.24f;
+		if (jumpMoving)
+			speedMultiplier = (std::max)(speedMultiplier, monster.underground ? 1.05f : 0.95f);
 		const float previousX = monster.x;
-		const float deltaX = idle ? 0.0f : monster.facing * MonsterMoveSpeed * speedMultiplier * deltaTime;
+		const float deltaX = idle ? 0.0f : moveDirection * MonsterMoveSpeed * speedMultiplier * deltaTime;
 		const float nextX = monster.x + deltaX;
-		const int groundProbeX = WorldToTileX(nextX + monster.facing * MonsterCollisionWidth * 0.55f);
+		const int groundProbeX = WorldToTileX(nextX + moveDirection * MonsterCollisionWidth * 0.55f);
 		const int groundProbeY = WorldToTileY(monster.y - MonsterCollisionHeight * 0.5f - m_tileSize * 0.35f);
 		const bool hasGroundAhead = IsSolidTile(groundProbeX, groundProbeY);
 		const bool blockedAhead = deltaX != 0.0f && IsAABBBlocked(GetMonsterAABB(nextX, monster.y), collisionInset);
 
-		if (deltaX != 0.0f && !blockedAhead && (hasGroundAhead || chasingPlayer || monster.underground))
+		if (deltaX != 0.0f && !blockedAhead && (hasGroundAhead || chasingPlayer || monster.underground || jumpMoving))
 		{
 			monster.x = nextX;
 		}
 		else if (deltaX != 0.0f)
 		{
-			const bool shouldJump = monster.onGround && monster.jumpCooldown <= 0.0f && (blockedAhead || (chasingPlayer && !hasGroundAhead && monster.underground));
+			const bool shouldJump = monster.onGround &&
+				monster.jumpCooldown <= 0.0f &&
+				chasingPlayer &&
+				monster.underground &&
+				blockedAhead &&
+				monster.stuckTimer > 0.28f;
 			if (shouldJump)
 			{
 				monster.velocityY = m_tileSize * (monster.underground ? 9.9f : 8.9f);
 				monster.onGround = false;
-				monster.jumpCooldown = monster.underground ? 0.52f : 0.72f;
+				monster.jumpCooldown = monster.underground ? 1.25f : 1.45f;
+				monster.jumpMoveDirection = moveDirection != 0 ? moveDirection : monster.facing;
+				monster.jumpMoveTimer = 0.58f;
 			}
-			else if (!chasingPlayer || !monster.underground)
+			else if (monster.onGround && !chasingPlayer && monster.aiTimer <= 0.0f)
 			{
 				if (contactShuffle)
 				{
@@ -674,11 +864,13 @@ void GameEngine::UpdateMonsters(float deltaTime)
 		else
 			monster.stuckTimer = 0.0f;
 
-		if (monster.stuckTimer > 0.45f && monster.onGround && monster.jumpCooldown <= 0.0f)
+		if (monster.stuckTimer > 0.85f && monster.onGround && monster.jumpCooldown <= 0.0f && blockedAhead)
 		{
 			monster.velocityY = m_tileSize * 9.3f;
 			monster.onGround = false;
-			monster.jumpCooldown = 0.65f;
+			monster.jumpCooldown = monster.underground ? 1.20f : 1.45f;
+			monster.jumpMoveDirection = moveDirection != 0 ? moveDirection : monster.facing;
+			monster.jumpMoveTimer = 0.58f;
 			if (contactShuffle)
 			{
 				monster.contactDirection *= -1;
@@ -798,8 +990,6 @@ void GameEngine::UpdateMonsters(float deltaTime)
 				separatedMonsters = true;
 			}
 
-			a.facing = direction < 0.0f ? -1 : 1;
-			b.facing = -a.facing;
 		}
 	}
 
@@ -946,11 +1136,11 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 	{
 		int tileX = 0;
 		int tileY = 0;
-		if (GetHoveredBlockTile(tileX, tileY) && IsTileNearPlayer(tileX, tileY, InteractionRangeTiles))
+		if (GetHoveredBlockTile(tileX, tileY) && IsTileInBlockInteractionRange(tileX, tileY))
 			miningBlockIndex = tileY * m_blockWidth + tileX;
 	}
 
-	for (BlockBreakState& breakState : m_blockBreaks)
+	for (BlockBreakState& breakState : m_world.blockBreaks)
 		breakState.active = 0;
 
 	if (m_uiConsumesLeftMouse)
@@ -959,15 +1149,15 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 		return;
 	}
 
-	if (miningBlockIndex < 0 || miningBlockIndex >= static_cast<int>(m_blockBreaks.size()))
+	if (miningBlockIndex < 0 || miningBlockIndex >= static_cast<int>(m_world.blockBreaks.size()))
 	{
 		stopPublishedBreak();
 		return;
 	}
 
-	if (m_blocks[miningBlockIndex].visible == 0)
+	if (m_world.blocks[miningBlockIndex].visible == 0)
 	{
-		m_blockBreaks[miningBlockIndex] = BlockBreakState();
+		m_world.blockBreaks[miningBlockIndex] = BlockBreakState();
 		stopPublishedBreak();
 		return;
 	}
@@ -976,10 +1166,10 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 		stopPublishedBreak();
 	m_networkBreakingBlockIndex = miningBlockIndex;
 
-	BlockBreakState& breakState = m_blockBreaks[miningBlockIndex];
+	BlockBreakState& breakState = m_world.blockBreaks[miningBlockIndex];
 	breakState.active = 1;
 	breakState.idleTime = 0.0f;
-	breakState.progress += deltaTime / GetBlockBreakDuration(m_blocks[miningBlockIndex].tileIndex);
+	breakState.progress += deltaTime / GetBlockBreakDuration(m_world.blocks[miningBlockIndex].tileIndex);
 	const int tileX = miningBlockIndex % m_blockWidth;
 	const int tileY = miningBlockIndex / m_blockWidth;
 	PublishBlockBreakState(tileX, tileY, breakState.progress, true);
@@ -987,16 +1177,16 @@ void GameEngine::UpdateBlockBreaking(float deltaTime)
 		return;
 
 	TryHarvestTreeAt(tileX, tileY);
-	if (m_blocks[miningBlockIndex].visible != 0)
+	if (m_world.blocks[miningBlockIndex].visible != 0)
 	{
 		const float dropX = m_worldOriginX + tileX * m_tileSize;
 		const float dropY = m_worldOriginY - tileY * m_tileSize;
-		const unsigned short tileIndex = m_blocks[miningBlockIndex].tileIndex;
+		const unsigned short tileIndex = m_world.blocks[miningBlockIndex].tileIndex;
 		if (tileIndex != BlockLeaves)
 			SpawnDroppedItem(dropX, dropY, GetDroppedItemTileIndex(tileIndex), 1, tileIndex != BlockWood && tileIndex != BlockPlacedWood);
 		else
 			SpawnLeafBreakEffect(tileX, tileY);
-		m_blocks[miningBlockIndex].visible = 0;
+		m_world.blocks[miningBlockIndex].visible = 0;
 		MarkBlockChunkDirty(tileX, tileY);
 		PublishLocalTileEdit(tileX, tileY);
 	}
@@ -1031,7 +1221,7 @@ bool GameEngine::GetHoveredBlockTile(int& tileX, int& tileY) const
 	if (!GetHoveredTile(tileX, tileY))
 		return false;
 
-	return m_blocks[tileY * m_blockWidth + tileX].visible != 0;
+	return m_world.blocks[tileY * m_blockWidth + tileX].visible != 0;
 }
 
 collib::AABB GameEngine::GetPlayerAABB(float playerX, float playerY) const
@@ -1088,11 +1278,13 @@ bool GameEngine::IsSolidTile(int tileX, int tileY) const
 	if (tileX < 0 || tileX >= m_blockWidth || tileY >= m_blockHeight)
 		return true;
 
-	const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+	const BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
 	if (tile.visible == 0)
 		return false;
 
-	return tile.tileIndex != BlockWood && tile.tileIndex != BlockLeaves;
+	return tile.tileIndex != BlockWood &&
+		tile.tileIndex != BlockLeaves &&
+		tile.tileIndex != BlockCraftingTable;
 }
 
 bool GameEngine::IsTileNearPlayer(int tileX, int tileY, float maxTiles) const
@@ -1105,14 +1297,41 @@ bool GameEngine::IsTileNearPlayer(int tileX, int tileY, float maxTiles) const
 	return deltaX * deltaX + deltaY * deltaY <= maxDistance * maxDistance;
 }
 
+bool GameEngine::IsTileInBlockInteractionRange(int tileX, int tileY) const
+{
+	if (!IsTileInBounds(tileX, tileY))
+		return false;
+
+	const int playerTileX = WorldToTileX(m_player.x);
+	const int playerTileY = WorldToTileY(m_player.y - m_playerCollisionHeight * 0.5f);
+	const int deltaX = tileX - playerTileX;
+	const int deltaY = tileY - playerTileY;
+	if (deltaY < -BlockInteractionRangeUp || deltaY > BlockInteractionRangeDown)
+		return false;
+
+	const int absDeltaX = std::abs(deltaX);
+	if (absDeltaX > BlockInteractionHalfRangeX)
+		return false;
+
+	if (deltaY == -BlockInteractionRangeUp)
+		return false;
+	if (deltaY == -BlockInteractionRangeUp + 1)
+		return absDeltaX <= 1;
+	if (deltaY == -BlockInteractionRangeUp + 2)
+		return absDeltaX <= 2;
+
+	return true;
+}
+
 bool GameEngine::IsInventoryBlockSlot(int slot) const
 {
-	return slot >= 0 && slot < BlockInventorySlotCount;
+	const InventoryItemKind kind = GetInventoryItemKind(GetInventorySlotItem(slot));
+	return kind == InventoryItemKind::TerrainBlock || kind == InventoryItemKind::Furniture;
 }
 
 bool GameEngine::IsInventoryWeaponSlot(int slot) const
 {
-	return slot == SlotSword || slot == SlotAxe;
+	return GetInventoryItemKind(GetInventorySlotItem(slot)) == InventoryItemKind::Equipment;
 }
 
 bool GameEngine::IsMapTileRevealed(int tileX, int tileY) const
@@ -1121,25 +1340,25 @@ bool GameEngine::IsMapTileRevealed(int tileX, int tileY) const
 		return false;
 	if (m_debugRevealMap)
 		return true;
-	if (m_revealedTiles.size() != m_blocks.size())
+	if (m_world.revealedTiles.size() != m_world.blocks.size())
 		return false;
 
-	return m_revealedTiles[tileY * m_blockWidth + tileX] != 0;
+	return m_world.revealedTiles[tileY * m_blockWidth + tileX] != 0;
 }
 
 bool GameEngine::CanCraftTable() const
 {
-	return m_inventoryCounts[SlotWood] >= 4;
+	return GetInventoryItemCount(SlotWood) >= 4;
 }
 
 bool GameEngine::CanCraftSword() const
 {
-	return m_inventoryCounts[SlotWood] >= 2 && m_inventoryCounts[SlotStone] >= 3;
+	return GetInventoryItemCount(SlotWood) >= 2 && GetInventoryItemCount(SlotStone) >= 3;
 }
 
 bool GameEngine::CanCraftAxe() const
 {
-	return m_inventoryCounts[SlotWood] >= 3 && m_inventoryCounts[SlotStone] >= 2;
+	return GetInventoryItemCount(SlotWood) >= 3 && GetInventoryItemCount(SlotStone) >= 2;
 }
 
 bool GameEngine::CanPlaceBlockAt(int tileX, int tileY) const
@@ -1148,10 +1367,10 @@ bool GameEngine::CanPlaceBlockAt(int tileX, int tileY) const
 		return false;
 
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	if (m_blocks[blockIndex].visible != 0)
+	if (m_world.blocks[blockIndex].visible != 0)
 		return false;
 
-	if (!IsTileNearPlayer(tileX, tileY, InteractionRangeTiles))
+	if (!IsTileInBlockInteractionRange(tileX, tileY))
 		return false;
 
 	if (collib::Intersects(GetPlayerAABB(m_player.x, m_player.y), GetTileAABB(tileX, tileY)))
@@ -1168,13 +1387,14 @@ bool GameEngine::CanPlaceBlockAt(int tileX, int tileY) const
 
 bool GameEngine::CanPlaceSelectedBlockAt(int tileX, int tileY) const
 {
-	if (!IsInventoryBlockSlot(m_selectedInventorySlot))
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	if (!IsInventoryBlockSlot(selectedSlot))
 		return false;
 
-	if (m_inventoryCounts[m_selectedInventorySlot] <= 0)
+	if (m_inventory.GetSlotCount(selectedSlot) <= 0)
 		return false;
 
-	if (IsTopSurfaceOnlyItem(m_selectedInventorySlot))
+	if (IsTopSurfaceOnlyItem(GetSelectedInventoryItem()))
 	{
 		if (!CanPlaceBlockAt(tileX, tileY))
 			return false;
@@ -1187,13 +1407,18 @@ bool GameEngine::CanPlaceSelectedBlockAt(int tileX, int tileY) const
 
 bool GameEngine::ShouldLeftClickAttack() const
 {
-	int tileX = 0;
-	int tileY = 0;
-	if (!GetHoveredTile(tileX, tileY))
+	float cursorViewX = 0.0f;
+	float cursorViewY = 0.0f;
+	if (!GetCursorGameViewPosition(cursorViewX, cursorViewY))
 		return false;
 
+	const int tileX = WorldToTileX(cursorViewX + m_cameraX);
+	const int tileY = WorldToTileY(cursorViewY + m_cameraY);
+	if (!IsTileInBounds(tileX, tileY))
+		return true;
+
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	return m_blocks[blockIndex].visible == 0;
+	return m_world.blocks[blockIndex].visible == 0 || !IsTileInBlockInteractionRange(tileX, tileY);
 }
 
 bool GameEngine::IsCraftingTableNearby() const
@@ -1209,7 +1434,7 @@ bool GameEngine::IsCraftingTableNearby() const
 			if (!IsTileInBounds(tileX, tileY))
 				continue;
 
-			const BlockTile& tile = m_blocks[tileY * m_blockWidth + tileX];
+			const BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
 			if (tile.visible != 0 && tile.tileIndex == BlockCraftingTable && IsTileNearPlayer(tileX, tileY, 4.5f))
 				return true;
 		}
@@ -1226,10 +1451,207 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	const int startX = tileX;
 	const int startY = tileY;
 	const int blockIndex = tileY * m_blockWidth + tileX;
-	if (m_blocks[blockIndex].visible == 0 || m_blocks[blockIndex].tileIndex != BlockWood)
+	if (m_world.blocks[blockIndex].visible == 0 || m_world.blocks[blockIndex].tileIndex != BlockWood)
 		return false;
 
-	std::vector<unsigned char> treeVisited(m_blocks.size(), 0);
+	auto isWoodTile = [this](int checkX, int checkY)
+	{
+		if (!IsTileInBounds(checkX, checkY))
+			return false;
+
+		const BlockTile& tile = m_world.blocks[checkY * m_blockWidth + checkX];
+		return tile.visible != 0 && tile.tileIndex == BlockWood;
+	};
+
+	auto hasVerticalWoodNeighbor = [&isWoodTile](int checkX, int checkY)
+	{
+		return isWoodTile(checkX, checkY - 1) || isWoodTile(checkX, checkY + 1);
+	};
+
+	auto tryHarvestHorizontalBranch = [&]()
+	{
+		if (hasVerticalWoodNeighbor(startX, startY))
+			return false;
+
+		int leftX = startX;
+		while (isWoodTile(leftX - 1, startY))
+			--leftX;
+
+		int rightX = startX;
+		while (isWoodTile(rightX + 1, startY))
+			++rightX;
+
+		if (leftX == rightX)
+			return false;
+
+		int trunkAnchorX = -1;
+		int bestDistance = 9999;
+		for (int branchX = leftX; branchX <= rightX; ++branchX)
+		{
+			if (!hasVerticalWoodNeighbor(branchX, startY))
+				continue;
+
+			const int distance = std::abs(branchX - startX);
+			if (distance < bestDistance)
+			{
+				bestDistance = distance;
+				trunkAnchorX = branchX;
+			}
+		}
+
+		if (trunkAnchorX < 0)
+			return false;
+
+		const int step = startX > trunkAnchorX ? 1 : -1;
+		const int terminalX = step > 0 ? rightX : leftX;
+		std::vector<int> branchWoodIndices;
+		branchWoodIndices.reserve(static_cast<size_t>(std::abs(terminalX - startX)));
+
+		for (int branchX = startX + step; step > 0 ? branchX <= terminalX : branchX >= terminalX; branchX += step)
+		{
+			if (!isWoodTile(branchX, startY))
+				break;
+
+			branchWoodIndices.push_back(startY * m_blockWidth + branchX);
+		}
+
+		std::vector<int> branchOwnedWoodIndices;
+		branchOwnedWoodIndices.reserve(branchWoodIndices.size() + 1);
+		branchOwnedWoodIndices.push_back(blockIndex);
+		for (int woodIndex : branchWoodIndices)
+			branchOwnedWoodIndices.push_back(woodIndex);
+
+		std::vector<unsigned char> branchWoodMask(m_world.blocks.size(), 0);
+		for (int woodIndex : branchOwnedWoodIndices)
+		{
+			if (woodIndex >= 0 && woodIndex < static_cast<int>(branchWoodMask.size()))
+				branchWoodMask[woodIndex] = 1;
+		}
+
+		constexpr int BranchLeafSearchRadius = 5;
+		std::vector<int> branchLeafIndices;
+		branchLeafIndices.reserve(48);
+		std::vector<unsigned char> branchLeafVisited(m_world.blocks.size(), 0);
+
+		auto nearestOwnedBranchWoodDistance = [&](int leafX, int leafY)
+		{
+			int bestDistance = 9999;
+			for (int woodIndex : branchOwnedWoodIndices)
+			{
+				const int woodX = woodIndex % m_blockWidth;
+				const int woodY = woodIndex / m_blockWidth;
+				const int distance = std::abs(leafX - woodX) + std::abs(leafY - woodY);
+				if (distance < bestDistance)
+					bestDistance = distance;
+			}
+
+			return bestDistance;
+		};
+
+		auto nearestOtherWoodDistance = [&](int leafX, int leafY)
+		{
+			int bestDistance = 9999;
+			for (int offsetY = -BranchLeafSearchRadius; offsetY <= BranchLeafSearchRadius; ++offsetY)
+			{
+				for (int offsetX = -BranchLeafSearchRadius; offsetX <= BranchLeafSearchRadius; ++offsetX)
+				{
+					const int woodX = leafX + offsetX;
+					const int woodY = leafY + offsetY;
+					if (!IsTileInBounds(woodX, woodY))
+						continue;
+
+					const int woodIndex = woodY * m_blockWidth + woodX;
+					if (branchWoodMask[woodIndex] != 0)
+						continue;
+
+					const BlockTile& tile = m_world.blocks[woodIndex];
+					if (tile.visible == 0 || tile.tileIndex != BlockWood)
+						continue;
+
+					const int distance = std::abs(offsetX) + std::abs(offsetY);
+					if (distance < bestDistance)
+						bestDistance = distance;
+				}
+			}
+
+			return bestDistance;
+		};
+
+		auto tryAddBranchLeaf = [&](int leafX, int leafY)
+		{
+			if (!IsTileInBounds(leafX, leafY))
+				return;
+			if (step > 0 ? leafX < trunkAnchorX : leafX > trunkAnchorX)
+				return;
+
+			const int leafIndex = leafY * m_blockWidth + leafX;
+			if (branchLeafVisited[leafIndex] != 0)
+				return;
+
+			const BlockTile& tile = m_world.blocks[leafIndex];
+			if (tile.visible == 0 || tile.tileIndex != BlockLeaves)
+				return;
+
+			const int branchDistance = nearestOwnedBranchWoodDistance(leafX, leafY);
+			if (branchDistance > BranchLeafSearchRadius + 1)
+				return;
+
+			const int otherDistance = nearestOtherWoodDistance(leafX, leafY);
+			if (branchDistance > otherDistance + 1)
+				return;
+
+			branchLeafVisited[leafIndex] = 1;
+			branchLeafIndices.push_back(leafIndex);
+		};
+
+		for (int woodIndex : branchOwnedWoodIndices)
+		{
+			const int woodX = woodIndex % m_blockWidth;
+			const int woodY = woodIndex / m_blockWidth;
+			for (int offsetY = -BranchLeafSearchRadius; offsetY <= BranchLeafSearchRadius; ++offsetY)
+			{
+				for (int offsetX = -BranchLeafSearchRadius; offsetX <= BranchLeafSearchRadius; ++offsetX)
+				{
+					if (std::abs(offsetX) + std::abs(offsetY) > BranchLeafSearchRadius + 1)
+						continue;
+
+					tryAddBranchLeaf(woodX + offsetX, woodY + offsetY);
+				}
+			}
+		}
+
+		for (int woodIndex : branchWoodIndices)
+		{
+			m_world.blocks[woodIndex].visible = 0;
+			if (woodIndex >= 0 && woodIndex < static_cast<int>(m_world.blockBreaks.size()))
+				m_world.blockBreaks[woodIndex] = BlockBreakState();
+			MarkBlockIndexDirty(woodIndex);
+			PublishLocalTileEdit(woodIndex % m_blockWidth, woodIndex / m_blockWidth);
+
+			const int woodX = woodIndex % m_blockWidth;
+			const int woodY = woodIndex / m_blockWidth;
+			const float dropX = m_worldOriginX + woodX * m_tileSize;
+			const float dropY = m_worldOriginY - woodY * m_tileSize;
+			SpawnDroppedItem(dropX, dropY, BlockWood, 1, false);
+		}
+
+		for (int leafIndex : branchLeafIndices)
+		{
+			SpawnLeafBreakEffect(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
+			m_world.blocks[leafIndex].visible = 0;
+			if (leafIndex >= 0 && leafIndex < static_cast<int>(m_world.blockBreaks.size()))
+				m_world.blockBreaks[leafIndex] = BlockBreakState();
+			MarkBlockIndexDirty(leafIndex);
+			PublishLocalTileEdit(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
+		}
+
+		return true;
+	};
+
+	if (tryHarvestHorizontalBranch())
+		return true;
+
+	std::vector<unsigned char> treeVisited(m_world.blocks.size(), 0);
 	std::vector<int> treeQueue;
 	std::vector<int> treeWoodIndices;
 	treeQueue.reserve(96);
@@ -1244,7 +1666,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		if (treeVisited[nextIndex] != 0)
 			return;
 
-		const BlockTile& tile = m_blocks[nextIndex];
+		const BlockTile& tile = m_world.blocks[nextIndex];
 		if (tile.visible == 0 || tile.tileIndex != BlockWood)
 			return;
 
@@ -1265,7 +1687,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		tryAddTreeWood(currentX, currentY + 1);
 	}
 
-	std::vector<unsigned char> fallingVisited(m_blocks.size(), 0);
+	std::vector<unsigned char> fallingVisited(m_world.blocks.size(), 0);
 	std::vector<int> fallingQueue;
 	std::vector<int> fallingWoodIndices;
 	fallingQueue.reserve(treeWoodIndices.size());
@@ -1282,7 +1704,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		if (fallingVisited[nextIndex] != 0)
 			return;
 
-		const BlockTile& tile = m_blocks[nextIndex];
+		const BlockTile& tile = m_world.blocks[nextIndex];
 		if (tile.visible == 0 || tile.tileIndex != BlockWood)
 			return;
 
@@ -1307,7 +1729,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 
 	std::vector<int> leafIndices;
 	leafIndices.reserve(128);
-	std::vector<unsigned char> leafVisited(m_blocks.size(), 0);
+	std::vector<unsigned char> leafVisited(m_world.blocks.size(), 0);
 	constexpr int LeafSearchRadius = 6;
 
 	auto nearestTreeWoodDistance = [&](int leafX, int leafY)
@@ -1337,7 +1759,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 					continue;
 
 				const int woodIndex = woodY * m_blockWidth + woodX;
-				const BlockTile& tile = m_blocks[woodIndex];
+				const BlockTile& tile = m_world.blocks[woodIndex];
 				if (tile.visible == 0 || tile.tileIndex != BlockWood || treeVisited[woodIndex] != 0)
 					continue;
 
@@ -1359,7 +1781,7 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		if (leafVisited[nextIndex] != 0)
 			return;
 
-		const BlockTile& tile = m_blocks[nextIndex];
+		const BlockTile& tile = m_world.blocks[nextIndex];
 		if (tile.visible == 0 || tile.tileIndex != BlockLeaves)
 			return;
 
@@ -1394,9 +1816,9 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 
 	for (int woodIndex : fallingWoodIndices)
 	{
-		m_blocks[woodIndex].visible = 0;
-		if (woodIndex >= 0 && woodIndex < static_cast<int>(m_blockBreaks.size()))
-			m_blockBreaks[woodIndex] = BlockBreakState();
+		m_world.blocks[woodIndex].visible = 0;
+		if (woodIndex >= 0 && woodIndex < static_cast<int>(m_world.blockBreaks.size()))
+			m_world.blockBreaks[woodIndex] = BlockBreakState();
 		MarkBlockIndexDirty(woodIndex);
 		PublishLocalTileEdit(woodIndex % m_blockWidth, woodIndex / m_blockWidth);
 	}
@@ -1404,9 +1826,9 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 	for (int leafIndex : leafIndices)
 	{
 		SpawnLeafBreakEffect(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
-		m_blocks[leafIndex].visible = 0;
-		if (leafIndex >= 0 && leafIndex < static_cast<int>(m_blockBreaks.size()))
-			m_blockBreaks[leafIndex] = BlockBreakState();
+		m_world.blocks[leafIndex].visible = 0;
+		if (leafIndex >= 0 && leafIndex < static_cast<int>(m_world.blockBreaks.size()))
+			m_world.blockBreaks[leafIndex] = BlockBreakState();
 		MarkBlockIndexDirty(leafIndex);
 		PublishLocalTileEdit(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
 	}
@@ -1440,8 +1862,9 @@ int GameEngine::GetPlayerMaxHealth() const
 int GameEngine::GetPlayerDefense() const
 {
 	int defense = PlayerBaseDefense;
-	if (IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0)
-		defense += GetEquipmentStatsForSlot(m_selectedInventorySlot).defenseBonus;
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	if (IsInventoryWeaponSlot(selectedSlot) && m_inventory.GetSlotCount(selectedSlot) > 0)
+		defense += GetEquipmentStatsForSlot(GetSelectedInventoryItem()).defenseBonus;
 
 	return defense;
 }
@@ -1449,8 +1872,9 @@ int GameEngine::GetPlayerDefense() const
 int GameEngine::GetPlayerAttackDamage() const
 {
 	int attack = PlayerBaseAttack;
-	if (IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0)
-		attack += GetEquipmentStatsForSlot(m_selectedInventorySlot).attackBonus;
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	if (IsInventoryWeaponSlot(selectedSlot) && m_inventory.GetSlotCount(selectedSlot) > 0)
+		attack += GetEquipmentStatsForSlot(GetSelectedInventoryItem()).attackBonus;
 
 	return attack;
 }
@@ -1467,8 +1891,9 @@ float GameEngine::GetPlayerJumpSpeedTiles() const
 
 float GameEngine::GetSelectedChopSpeedMultiplier() const
 {
-	if (IsInventoryWeaponSlot(m_selectedInventorySlot) && m_inventoryCounts[m_selectedInventorySlot] > 0)
-		return GetEquipmentStatsForSlot(m_selectedInventorySlot).chopSpeedMultiplier;
+	const int selectedSlot = m_inventory.GetSelectedSlot();
+	if (IsInventoryWeaponSlot(selectedSlot) && m_inventory.GetSlotCount(selectedSlot) > 0)
+		return GetEquipmentStatsForSlot(GetSelectedInventoryItem()).chopSpeedMultiplier;
 
 	return 1.0f;
 }
@@ -1594,11 +2019,11 @@ void GameEngine::AddBlockToInventory(unsigned short tileIndex, int amount)
 		break;
 	}
 
-	for (int slot = 0; slot < BlockInventorySlotCount; ++slot)
+	for (int item = 0; item < BlockInventorySlotCount; ++item)
 	{
-		if (InventoryTileIndices[slot] == tileIndex)
+		if (InventoryTileIndices[item] == tileIndex)
 		{
-			m_inventoryCounts[slot] += amount;
+			AddInventoryItem(item, amount);
 			return;
 		}
 	}
@@ -1719,7 +2144,7 @@ void GameEngine::MarkBlockChunkDirty(int tileX, int tileY)
 
 void GameEngine::MarkBlockIndexDirty(int blockIndex)
 {
-	if (blockIndex < 0 || blockIndex >= static_cast<int>(m_blocks.size()))
+	if (blockIndex < 0 || blockIndex >= static_cast<int>(m_world.blocks.size()))
 		return;
 
 	MarkBlockChunkDirty(blockIndex % m_blockWidth, blockIndex / m_blockWidth);
@@ -1756,3 +2181,5 @@ void GameEngine::RebuildMonsterSpatialGrid()
 		m_monsterGridHeads[cellIndex] = static_cast<int>(i);
 	}
 }
+
+

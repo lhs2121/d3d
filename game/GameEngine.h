@@ -8,6 +8,11 @@
 #include <windowlib/Interface.h>
 #include <array>
 #include <vector>
+#include "GameInventory.h"
+#include "GameNetworkState.h"
+#include "GameNetworkTypes.h"
+#include "GameStates.h"
+#include "GameWorldData.h"
 
 class GameEngine : public IGameLoop
 {
@@ -31,127 +36,6 @@ public:
 	void Release() override;
 
 private:
-	struct PlayerState
-	{
-		float x = 0.0f;
-		float y = 0.0f;
-		float velocityX = 0.0f;
-		float velocityY = 0.0f;
-		float animationTime = 0.0f;
-		int facing = 1;
-		bool onGround = false;
-	};
-
-	struct BlockBreakState
-	{
-		float progress = 0.0f;
-		float idleTime = 0.0f;
-		unsigned char active = 0;
-	};
-
-	struct MonsterState
-	{
-		float x = 0.0f;
-		float y = 0.0f;
-		float velocityY = 0.0f;
-		float hurtTimer = 0.0f;
-		float attackCooldown = 0.0f;
-		float aiTimer = 0.0f;
-		float idleTimer = 0.0f;
-		float jumpCooldown = 0.0f;
-		float stuckTimer = 0.0f;
-		float animationTime = 0.0f;
-		float contactTimer = 0.0f;
-		float homeX = 0.0f;
-		float lastX = 0.0f;
-		int facing = -1;
-		int contactDirection = 0;
-		int health = 40;
-		int maxHealth = 40;
-		unsigned char biome = 0;
-		bool onGround = false;
-		bool alive = true;
-		bool underground = false;
-	};
-
-	struct DroppedItemState
-	{
-		float x = 0.0f;
-		float y = 0.0f;
-		float velocityX = 0.0f;
-		float velocityY = 0.0f;
-		float pickupDelay = 0.0f;
-		unsigned short tileIndex = 0;
-		unsigned int networkId = 0;
-		int amount = 1;
-		int pickupPlayerId = 0;
-		bool alive = false;
-	};
-
-	struct LeafParticleState
-	{
-		float x = 0.0f;
-		float y = 0.0f;
-		float velocityX = 0.0f;
-		float velocityY = 0.0f;
-		float age = 0.0f;
-		float lifetime = 0.0f;
-		float rotation = 0.0f;
-		float angularVelocity = 0.0f;
-		float size = 0.0f;
-		bool alive = false;
-	};
-
-	struct MinimapRunState
-	{
-		float x = 0.0f;
-		float y = 0.0f;
-		float width = 0.0f;
-		float colorR = 0.0f;
-		float colorG = 0.0f;
-		float colorB = 0.0f;
-	};
-
-	struct RemotePlayerState
-	{
-		PlayerState player;
-		std::array<char, 24> nickname = {};
-		float lastHeardTime = 0.0f;
-		float attackTimer = 0.0f;
-		int id = 0;
-		int health = 100;
-		int selectedInventorySlot = 0;
-		bool active = false;
-	};
-
-	struct RemoteBlockBreakState
-	{
-		float progress = 0.0f;
-		float lastHeardTime = 0.0f;
-		int playerId = 0;
-		int tileX = 0;
-		int tileY = 0;
-		bool active = false;
-	};
-
-	struct NetworkPeerState
-	{
-		NetworkAddress address = {};
-		float lastHeardTime = 0.0f;
-		unsigned int token = 0;
-		int playerId = 0;
-		bool active = false;
-	};
-
-	struct NetworkTileEditState
-	{
-		int tileX = 0;
-		int tileY = 0;
-		unsigned short tileIndex = 0;
-		unsigned char visible = 0;
-		unsigned int sequence = 0;
-	};
-
 	struct CpuFrameStats
 	{
 		float totalMs = 0.0f;
@@ -205,7 +89,15 @@ private:
 	void PasteMultiplayerJoinHostFromClipboard();
 	void AppendLocalNicknameChar(char value);
 	void PasteLocalNicknameFromClipboard();
-	void UpdateLocalNicknameInput();
+	void UpdateLocalNicknameInput(float deltaTime);
+	void ResetLocalNicknameSelection();
+	bool HasLocalNicknameSelection() const;
+	void DeleteLocalNicknameSelection();
+	void DeleteLocalNicknameBackward();
+	int GetLocalNicknameTextIndexAt(float viewX, float textLeft, float pixelSize) const;
+	void BeginLocalNicknameSelection(float viewX, float textLeft, float pixelSize);
+	void UpdateLocalNicknameSelectionDrag(float viewX, float textLeft, float pixelSize);
+	void DrawLocalNicknameInputValue(float textLeft, float textY, float pixelSize, bool editing, float depth);
 	const char* GetLocalNickname() const;
 	void CopyLocalNicknameTo(char* destination, size_t destinationSize) const;
 	void BuildNetworkPeerListText(char* destination, size_t destinationSize) const;
@@ -259,6 +151,15 @@ private:
 	bool CraftAxe();
 	bool CraftTable();
 	bool CraftRecipe(int recipeIndex);
+	bool TryUseTeleportPotion();
+	int GetInventorySlotItem(int slot) const;
+	int GetSelectedInventoryItem() const;
+	int GetInventoryItemCount(int item) const;
+	int AddInventoryItem(int item, int amount);
+	bool RemoveInventoryItem(int item, int amount);
+	void ClearInventorySlotIfEmpty(int slot);
+	void SwapInventorySlots(int firstSlot, int secondSlot);
+	void ClearInventoryDragState();
 	void TryPlaceSelectedBlock(float deltaTime);
 	void UpdatePlayerCombat(float deltaTime);
 	void TryPlayerAttack();
@@ -286,6 +187,8 @@ private:
 	void DrawAttackArc();
 	void DrawInventory();
 	void DrawWeaponIcon(float centerX, float centerY, float size, float depth, float alpha, int slot);
+	void DrawTeleportPotionIcon(float centerX, float centerY, float size, float depth, float alpha);
+	void DrawInventoryItemIcon(int item, float centerX, float centerY, float size, float depth, float alpha);
 	void DrawMinimap();
 	void DrawPlayerStatus();
 	void DrawPlayerStatsPanel();
@@ -324,6 +227,7 @@ private:
 	bool IsTileInBounds(int tileX, int tileY) const;
 	bool IsSolidTile(int tileX, int tileY) const;
 	bool IsTileNearPlayer(int tileX, int tileY, float maxTiles) const;
+	bool IsTileInBlockInteractionRange(int tileX, int tileY) const;
 	bool IsInventoryBlockSlot(int slot) const;
 	bool IsInventoryWeaponSlot(int slot) const;
 	bool IsMapTileRevealed(int tileX, int tileY) const;
@@ -365,17 +269,13 @@ private:
 	float TileTop(int tileY) const;
 	float TileBottom(int tileY) const;
 
-	static constexpr int InventorySlotCount = 50;
+	static constexpr int InventorySlotCount = GameInventory::SlotCount;
 
 	IRenderer* m_renderer = nullptr;
 	ITimer* m_timer = nullptr;
 	IWindow* m_window = nullptr;
 	IInput* m_input = nullptr;
-	std::vector<BlockTile> m_blocks;
-	std::vector<BlockBreakState> m_blockBreaks;
-	std::vector<int> m_surfaceHeights;
-	std::vector<unsigned char> m_biomes;
-	std::vector<unsigned char> m_revealedTiles;
+	GameWorldData m_world;
 	std::vector<MonsterState> m_monsters;
 	std::vector<DroppedItemState> m_droppedItems;
 	std::vector<LeafParticleState> m_leafParticles;
@@ -384,13 +284,8 @@ private:
 	std::vector<int> m_monsterQueryScratch;
 	std::vector<int> m_monsterOverlapScratch;
 	std::vector<MinimapRunState> m_minimapRuns;
-	std::vector<RemotePlayerState> m_remotePlayers;
-	std::vector<RemoteBlockBreakState> m_remoteBlockBreaks;
-	std::vector<NetworkPeerState> m_networkPeers;
-	std::vector<NetworkTileEditState> m_networkTileHistory;
-	std::vector<NetworkTileEditState> m_pendingNetworkTileEdits;
-	std::vector<DroppedItemState> m_pendingNetworkDroppedItems;
-	std::array<int, InventorySlotCount> m_inventoryCounts = {};
+	GameInventory m_inventory;
+	GameNetworkState m_networkState;
 	std::array<char, 64> m_multiplayerJoinHost = { '1', '2', '7', '.', '0', '.', '0', '.', '1', '\0' };
 	std::array<char, 24> m_localNickname = { 'P', 'L', 'A', 'Y', 'E', 'R', '\0' };
 	std::array<char, 64> m_multiplayerMenuStatus = {};
@@ -399,7 +294,6 @@ private:
 	NetworkConfig m_networkConfig;
 	NetworkConfig::Mode m_networkMode = NetworkConfig::Mode::SinglePlayer;
 	INetworkTransport* m_networkTransport = nullptr;
-	int m_selectedInventorySlot = 0;
 	int m_inventoryWheelRemainder = 0;
 	int m_craftingWheelRemainder = 0;
 	int m_craftingScrollOffset = 0;
@@ -469,6 +363,7 @@ private:
 	bool m_startNicknameEditing = false;
 	bool m_multiplayerJoinHostEditing = false;
 	bool m_multiplayerNicknameEditing = false;
+	bool m_localNicknameSelecting = false;
 	bool m_acceptInput = false;
 	bool m_showRenderStats = false;
 	bool m_frameLimitEnabled = false;
@@ -478,7 +373,12 @@ private:
 	bool m_debugRevealMap = false;
 	bool m_cachedMinimapExpanded = false;
 	bool m_minimapDirty = true;
+	int m_localNicknameCursor = 6;
+	int m_localNicknameSelectionAnchor = 6;
+	int m_localNicknameSelectionCursor = 6;
 	std::vector<unsigned int> m_blockChunkVersions;
 	std::array<char, 48> m_statusText = {};
 	float m_statusTextTimer = 0.0f;
+	float m_localNicknameBackspaceTimer = 0.0f;
 };
+
