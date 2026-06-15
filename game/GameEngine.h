@@ -140,6 +140,12 @@ private:
 	void UpdateMapReveal();
 	void RevealAllMap();
 	void ResetMapReveal();
+	void ResetMinimapTextureCache();
+	void EnsureMinimapTexture();
+	void MarkMinimapTileDirty(int tileX, int tileY);
+	void MarkMinimapAllDirty();
+	void UploadMinimapDirtyTiles();
+	unsigned int GetMinimapTilePixel(int tileX, int tileY) const;
 	void UpdatePlayer(float deltaTime);
 	void UpdateInventoryInput();
 	void UpdateCrafting(float deltaTime);
@@ -299,6 +305,8 @@ private:
 	std::vector<int> m_monsterQueryScratch;
 	std::vector<int> m_monsterOverlapScratch;
 	std::vector<MinimapRunState> m_minimapRuns;
+	std::vector<unsigned int> m_minimapPixels;
+	std::vector<unsigned char> m_minimapDirtyTiles;
 	GameInventory m_inventory;
 	GameNetworkState m_networkState;
 	std::array<char, 64> m_multiplayerJoinHost = { '1', '2', '7', '.', '0', '.', '0', '.', '1', '\0' };
@@ -311,7 +319,9 @@ private:
 	INetworkTransport* m_networkTransport = nullptr;
 	int m_inventoryWheelRemainder = 0;
 	int m_craftingWheelRemainder = 0;
+	int m_mainActionWheelRemainder = 0;
 	int m_craftingScrollOffset = 0;
+	int m_mainActionScrollOffset = 0;
 	int m_localPlayerId = 1;
 	int m_nextNetworkPlayerId = 2;
 	int m_blockWidth = 720;
@@ -322,6 +332,9 @@ private:
 	int m_blockChunkSizeTiles = 16;
 	int m_blockChunkColumns = 0;
 	int m_blockChunkRows = 0;
+	int m_minimapTextureId = 0;
+	int m_minimapTextureWidth = 0;
+	int m_minimapTextureHeight = 0;
 	int m_cachedMinimapStartX = -1;
 	int m_cachedMinimapEndX = -1;
 	int m_cachedMinimapStartY = -1;

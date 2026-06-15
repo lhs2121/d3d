@@ -552,6 +552,7 @@ void Renderer::InitializePipeline()
 void Renderer::ReleasePipeline()
 {
 	ReleaseFontAtlas();
+	ReleaseDynamicTextures();
 	ReleaseTextures();
 	if (m_pipeline.pPixelShader)
 		m_pipeline.pPixelShader->Release();
@@ -621,6 +622,21 @@ void Renderer::ReleaseTextures()
 	m_pipeline.pTexture = nullptr;
 	m_lastTextureFile = nullptr;
 	m_lastTextureView = nullptr;
+}
+
+void Renderer::ReleaseDynamicTextures()
+{
+	for (auto& texture : m_dynamicTextures)
+	{
+		if (texture.second.view)
+			texture.second.view->Release();
+		if (texture.second.texture)
+			texture.second.texture->Release();
+	}
+
+	m_dynamicTextures.clear();
+	m_boundTexture = nullptr;
+	m_spriteBatchTexture = nullptr;
 }
 
 void Renderer::ReleaseFontAtlas()
@@ -1052,18 +1068,21 @@ SpriteBatchInstance Renderer::BuildSpriteBatchInstance(const SpriteDesc& desc) c
 	const int tileY = tileIndex / atlasColumns;
 	const float uvWidth = 1.0f / atlasColumns;
 	const float uvHeight = 1.0f / atlasRows;
-	float u0 = tileX * uvWidth;
-	float widthScale = uvWidth;
+	const bool useExplicitUv = desc.uvWidth > 0.0f && desc.uvHeight > 0.0f;
+	float u0 = useExplicitUv ? desc.uvX : tileX * uvWidth;
+	float v0 = useExplicitUv ? desc.uvY : tileY * uvHeight;
+	float widthScale = useExplicitUv ? desc.uvWidth : uvWidth;
+	float heightScale = useExplicitUv ? desc.uvHeight : uvHeight;
 	if (desc.flipX)
 	{
-		u0 = (tileX + 1) * uvWidth;
-		widthScale = -uvWidth;
+		u0 += widthScale;
+		widthScale = -widthScale;
 	}
 
 	SpriteBatchInstance instance;
 	instance.transform = { desc.positionX, desc.positionY, desc.width, desc.height };
 	instance.rotationDepth = { std::sin(desc.rotationRadians), std::cos(desc.rotationRadians), desc.depth, 0.0f };
-	instance.uv = { u0, tileY * uvHeight, widthScale, uvHeight };
+	instance.uv = { u0, v0, widthScale, heightScale };
 	instance.color = { desc.colorR, desc.colorG, desc.colorB, desc.colorA };
 	return instance;
 }
@@ -1255,6 +1274,128 @@ void Renderer::FlushGlyphBatch()
 void Renderer::LoadTexture(const WCHAR* textureFile)
 {
 	m_pipeline.pTexture = GetTexture(textureFile);
+}
+
+int Renderer::CreateDynamicTexture(int width, int height, const unsigned int* pixels)
+{
+	if (m_pDevice == nullptr || width <= 0 || height <= 0)
+		return 0;
+
+	D3D11_TEXTURE2D_DESC textureDesc = {};
+	textureDesc.Width = static_cast<UINT>(width);
+	textureDesc.Height = static_cast<UINT>(height);
+	textureDesc.MipLevels = 1;
+	textureDesc.ArraySize = 1;
+	textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	textureDesc.SampleDesc.Count = 1;
+	textureDesc.Usage = D3D11_USAGE_DEFAULT;
+	textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+	D3D11_SUBRESOURCE_DATA textureData = {};
+	textureData.pSysMem = pixels;
+	textureData.SysMemPitch = static_cast<UINT>(width * sizeof(unsigned int));
+
+	ID3D11Texture2D* texture = nullptr;
+	if (S_OK != m_pDevice->CreateTexture2D(&textureDesc, pixels != nullptr ? &textureData : nullptr, &texture))
+		return 0;
+
+	ID3D11ShaderResourceView* view = nullptr;
+	if (S_OK != m_pDevice->CreateShaderResourceView(texture, nullptr, &view))
+	{
+		texture->Release();
+		return 0;
+	}
+
+	int textureId = m_nextDynamicTextureId++;
+	if (m_nextDynamicTextureId <= 0)
+		m_nextDynamicTextureId = 1;
+	while (m_dynamicTextures.find(textureId) != m_dynamicTextures.end())
+	{
+		textureId = m_nextDynamicTextureId++;
+		if (m_nextDynamicTextureId <= 0)
+			m_nextDynamicTextureId = 1;
+	}
+
+	DynamicTextureState state;
+	state.texture = texture;
+	state.view = view;
+	state.width = width;
+	state.height = height;
+	m_dynamicTextures.insert({ textureId, state });
+	return textureId;
+}
+
+DynamicTextureState* Renderer::GetDynamicTexture(int textureId)
+{
+	auto iter = m_dynamicTextures.find(textureId);
+	if (iter == m_dynamicTextures.end())
+		return nullptr;
+	return &iter->second;
+}
+
+void Renderer::UpdateDynamicTexture(int textureId, int x, int y, int width, int height, const unsigned int* pixels, int pitchPixels)
+{
+	DynamicTextureState* texture = GetDynamicTexture(textureId);
+	if (texture == nullptr || texture->texture == nullptr || pixels == nullptr)
+		return;
+
+	x = std::clamp(x, 0, texture->width);
+	y = std::clamp(y, 0, texture->height);
+	width = (std::max)(0, (std::min)(width, texture->width - x));
+	height = (std::max)(0, (std::min)(height, texture->height - y));
+	if (width <= 0 || height <= 0)
+		return;
+
+	FlushSpriteBatch();
+	FlushFontSpriteBatch();
+	ID3D11ShaderResourceView* nullView = nullptr;
+	m_pDeviceContext->PSSetShaderResources(0, 1, &nullView);
+	if (m_boundTexture == texture->view)
+		m_boundTexture = nullptr;
+
+	D3D11_BOX box = {};
+	box.left = static_cast<UINT>(x);
+	box.top = static_cast<UINT>(y);
+	box.front = 0;
+	box.right = static_cast<UINT>(x + width);
+	box.bottom = static_cast<UINT>(y + height);
+	box.back = 1;
+	const int safePitchPixels = pitchPixels > 0 ? pitchPixels : width;
+	m_pDeviceContext->UpdateSubresource(
+		texture->texture,
+		0,
+		&box,
+		pixels,
+		static_cast<UINT>(safePitchPixels * sizeof(unsigned int)),
+		0);
+}
+
+void Renderer::DrawDynamicTexture(int textureId, const SpriteDesc& desc)
+{
+	DynamicTextureState* texture = GetDynamicTexture(textureId);
+	if (texture == nullptr || texture->view == nullptr)
+		return;
+
+	DrawSpriteQuad(desc, texture->view);
+}
+
+void Renderer::ReleaseDynamicTexture(int textureId)
+{
+	auto iter = m_dynamicTextures.find(textureId);
+	if (iter == m_dynamicTextures.end())
+		return;
+
+	FlushSpriteBatch();
+	FlushFontSpriteBatch();
+	if (m_boundTexture == iter->second.view)
+		m_boundTexture = nullptr;
+	if (m_spriteBatchTexture == iter->second.view)
+		m_spriteBatchTexture = nullptr;
+	if (iter->second.view)
+		iter->second.view->Release();
+	if (iter->second.texture)
+		iter->second.texture->Release();
+	m_dynamicTextures.erase(iter);
 }
 
 ID3D11ShaderResourceView* Renderer::GetTexture(const WCHAR* textureFile)

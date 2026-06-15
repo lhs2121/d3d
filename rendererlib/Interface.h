@@ -46,6 +46,10 @@ struct SpriteDesc
 	int atlasRows = 1;
 	int tileIndex = 0;
 	int flipX = 0;
+	float uvX = 0.0f;
+	float uvY = 0.0f;
+	float uvWidth = 0.0f;
+	float uvHeight = 0.0f;
 	float rotationRadians = 0.0f;
 	float colorR = 1.0f;
 	float colorG = 1.0f;
@@ -149,6 +153,10 @@ struct IRenderer
 	virtual void ResetViewportRect() = 0;
 
 	virtual void LoadTexture(const WCHAR* textureFile) = 0;
+	virtual int CreateDynamicTexture(int width, int height, const unsigned int* pixels) = 0;
+	virtual void UpdateDynamicTexture(int textureId, int x, int y, int width, int height, const unsigned int* pixels, int pitchPixels) = 0;
+	virtual void DrawDynamicTexture(int textureId, const SpriteDesc& desc) = 0;
+	virtual void ReleaseDynamicTexture(int textureId) = 0;
 	virtual void DrawBlockGrid(const BlockGridDesc& desc) = 0;
 	virtual void DrawSprite(const SpriteDesc& desc) = 0;
 	virtual void DrawRectOutline(const RectOutlineDesc& desc) = 0;

@@ -63,6 +63,14 @@ struct FontGlyph
 	float advancePixels = 0.0f;
 };
 
+struct DynamicTextureState
+{
+	ID3D11Texture2D* texture = nullptr;
+	ID3D11ShaderResourceView* view = nullptr;
+	int width = 0;
+	int height = 0;
+};
+
 struct RenderPipeline
 {
 	ID3D11Buffer* pQuadVertexBuffer = nullptr;
@@ -103,6 +111,10 @@ public:
 	void ResetViewportRect() override;
 
 	void LoadTexture(const WCHAR* textureFile) override;
+	int CreateDynamicTexture(int width, int height, const unsigned int* pixels) override;
+	void UpdateDynamicTexture(int textureId, int x, int y, int width, int height, const unsigned int* pixels, int pitchPixels) override;
+	void DrawDynamicTexture(int textureId, const SpriteDesc& desc) override;
+	void ReleaseDynamicTexture(int textureId) override;
 	void DrawBlockGrid(const BlockGridDesc& desc) override;
 	void DrawSprite(const SpriteDesc& desc) override;
 	void DrawRectOutline(const RectOutlineDesc& desc) override;
@@ -114,6 +126,7 @@ private:
 	void InitializePipeline();
 	void ReleasePipeline();
 	void ReleaseTextures();
+	void ReleaseDynamicTextures();
 	void ReleaseFontAtlas();
 	void CreateWhiteTexture();
 	bool EnsureFontAtlas();
@@ -122,6 +135,7 @@ private:
 	unsigned int DecodeUtf8Codepoint(const char*& cursor) const;
 	void LoadPipelineShader(const WCHAR* shaderFile);
 	ID3D11ShaderResourceView* GetTexture(const WCHAR* textureFile);
+	DynamicTextureState* GetDynamicTexture(int textureId);
 	void BindSpritePipeline();
 	void BindTexture(ID3D11ShaderResourceView* texture);
 	void EnsureGridBatchCapacity(size_t quadCount);
@@ -150,6 +164,7 @@ private:
 	ID3DBlob* m_pGlyphBatchVertexShaderBlob = nullptr;
 	RenderPipeline m_pipeline;
 	std::unordered_map<std::wstring, ID3D11ShaderResourceView*> m_textureMap;
+	std::unordered_map<int, DynamicTextureState> m_dynamicTextures;
 	std::vector<GridInstance> m_gridInstances;
 	GridCacheState m_gridCache;
 	std::vector<SpriteBatchInstance> m_spriteBatchInstances;
@@ -183,6 +198,7 @@ private:
 	int m_fontAtlasRows = 0;
 	int m_fontGlyphCount = 0;
 	int m_fontPadding = 4;
+	int m_nextDynamicTextureId = 1;
 	float m_fontAsciiWidth = 27.0f;
 	UINT m_windowWidth = 1;
 	UINT m_windowHeight = 1;

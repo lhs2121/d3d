@@ -14,11 +14,9 @@ void GameEngine::InitializeWorld()
 	m_networkState.remoteBlockBreaks.clear();
 	m_monsterQueryScratch.clear();
 	m_monsterOverlapScratch.clear();
-	m_minimapRuns.clear();
-	m_minimapDirty = true;
+	ResetMinimapTextureCache();
 	m_debugRevealMap = false;
 	m_minimapExpanded = false;
-	m_cachedMinimapSampleStep = -1;
 	m_networkBreakingBlockIndex = -1;
 	m_worldOriginX = -((m_blockWidth - 1) * m_tileSize) * 0.5f;
 

@@ -47,110 +47,64 @@ namespace
 	constexpr int StartMenuActionStart = 15;
 	constexpr int StartMenuActionNickname = 16;
 	constexpr const WCHAR* BlockAtlasTexture = L"assets\\texture\\biome_sprite_atlas_concept.png";
-	constexpr const WCHAR* UiPanelDefaultTexture = L"assets\\ui\\panel_default.png";
-	constexpr const WCHAR* UiPanelInventoryTexture = L"assets\\ui\\panel_inventory.png";
-	constexpr const WCHAR* UiPanelLogTexture = L"assets\\ui\\panel_log.png";
-	constexpr const WCHAR* UiPanelMapTexture = L"assets\\ui\\panel_map.png";
-	constexpr const WCHAR* UiPanelCraftTexture = L"assets\\ui\\panel_craft.png";
-	constexpr const WCHAR* UiPanelStatusTexture = L"assets\\ui\\panel_status.png";
-	constexpr const WCHAR* UiPanelNetworkTexture = L"assets\\ui\\panel_network.png";
-	constexpr const WCHAR* UiPanelTooltipTexture = L"assets\\ui\\panel_tooltip.png";
-	constexpr const WCHAR* UiPanelGameTexture = L"assets\\ui\\panel_game.png";
-	constexpr const WCHAR* UiPanelTextures[] =
-	{
-		UiPanelDefaultTexture,
-		UiPanelInventoryTexture,
-		UiPanelLogTexture,
-		UiPanelMapTexture,
-		UiPanelCraftTexture,
-		UiPanelStatusTexture,
-		UiPanelNetworkTexture,
-		UiPanelTooltipTexture,
-		UiPanelGameTexture,
-	};
 	constexpr int BlockAtlasColumns = 16;
 	constexpr int BlockAtlasRows = 1;
-	constexpr float UiThemeCreamR = 0.74f;
-	constexpr float UiThemeCreamG = 0.91f;
-	constexpr float UiThemeCreamB = 0.88f;
-	constexpr float UiThemeMutedR = 0.48f;
-	constexpr float UiThemeMutedG = 0.50f;
-	constexpr float UiThemeMutedB = 0.65f;
-	constexpr float UiThemeBodyR = 0.20f;
-	constexpr float UiThemeBodyG = 0.30f;
-	constexpr float UiThemeBodyB = 0.32f;
-	constexpr float UiThemeBodyDarkR = 0.08f;
-	constexpr float UiThemeBodyDarkG = 0.13f;
-	constexpr float UiThemeBodyDarkB = 0.15f;
+	constexpr float UiThemeCreamR = 0.86f;
+	constexpr float UiThemeCreamG = 0.86f;
+	constexpr float UiThemeCreamB = 0.86f;
+	constexpr float UiThemeMutedR = 0.43f;
+	constexpr float UiThemeMutedG = 0.43f;
+	constexpr float UiThemeMutedB = 0.43f;
+	constexpr float UiThemeBodyR = 0.025f;
+	constexpr float UiThemeBodyG = 0.025f;
+	constexpr float UiThemeBodyB = 0.025f;
+	constexpr float UiThemeBodyDarkR = 0.0f;
+	constexpr float UiThemeBodyDarkG = 0.0f;
+	constexpr float UiThemeBodyDarkB = 0.0f;
+	constexpr float UiThemeAmberR = 0.08f;
+	constexpr float UiThemeAmberG = 0.24f;
+	constexpr float UiThemeAmberB = 0.56f;
+	constexpr float UiThemeCyanR = 0.62f;
+	constexpr float UiThemeCyanG = 0.62f;
+	constexpr float UiThemeCyanB = 0.62f;
 	constexpr float UiThemeShadowR = 0.01f;
 	constexpr float UiThemeShadowG = 0.02f;
 	constexpr float UiThemeShadowB = 0.03f;
-	constexpr float UiPanelGap = 0.0f;
-	constexpr float UiMockupWidth = 1653.0f;
-	constexpr float UiMockupHeight = 951.0f;
-	constexpr float UiMockupRightColumnWidth = 476.0f;
-	constexpr float UiMockupBottomHeight = 341.0f;
-	constexpr float UiInventoryFrameWidth = 548.0f;
-	constexpr float UiInventoryFrameHeight = 341.0f;
-	constexpr float UiLogFrameWidth = 629.0f;
-	constexpr float UiMapFrameWidth = 476.0f;
-	constexpr float UiMapFrameHeight = 198.0f;
-	constexpr float UiCraftFrameWidth = 476.0f;
-	constexpr float UiCraftFrameHeight = 376.0f;
-	constexpr float UiStatusFrameWidth = 476.0f;
-	constexpr float UiStatusFrameHeight = 377.0f;
+	constexpr float UiTerminalPad = 14.0f;
+	constexpr float UiTerminalHeaderHeight = 22.0f;
+	constexpr float UiTerminalListPad = 8.0f;
+	constexpr float UiTerminalListTopGap = 24.0f;
+	constexpr float UiTerminalListBottomPad = 7.0f;
+	constexpr float UiTerminalScrollbarWidth = 8.0f;
+	constexpr float UiScreenSafeInset = 18.0f;
 	constexpr int InventoryVisibleColumns = 7;
 	constexpr int InventoryVisibleRows = 4;
 	constexpr int InventoryPageCount = 2;
 	constexpr int InventoryVisibleSlotCount = InventoryVisibleColumns * InventoryVisibleRows;
-	constexpr float InventoryGridX = 131.0f;
-	constexpr float InventoryGridY = 55.0f;
-	constexpr float InventoryCellWidth = 53.0f;
-	constexpr float InventoryCellHeight = 56.0f;
-	constexpr float InventorySidebarWidth = 104.0f;
-
-	const WCHAR* GetUiPanelTextureFile(const char* title)
-	{
-		if (title == nullptr || title[0] == '\0')
-			return UiPanelDefaultTexture;
-		if (std::strcmp(title, "inventory") == 0)
-			return UiPanelInventoryTexture;
-		if (std::strcmp(title, "log") == 0 || std::strcmp(title, "performance") == 0 || std::strcmp(title, "status-log") == 0)
-			return UiPanelLogTexture;
-		if (std::strcmp(title, "map") == 0)
-			return UiPanelMapTexture;
-		if (std::strcmp(title, "craft") == 0)
-			return UiPanelCraftTexture;
-		if (std::strcmp(title, "status") == 0 || std::strcmp(title, "actions") == 0)
-			return UiPanelStatusTexture;
-		if (std::strcmp(title, "network") == 0)
-			return UiPanelNetworkTexture;
-		if (std::strcmp(title, "tooltip") == 0)
-			return UiPanelTooltipTexture;
-		if (std::strcmp(title, "game") == 0)
-			return UiPanelGameTexture;
-
-		return UiPanelDefaultTexture;
-	}
-
 	const char* GetUiPanelDisplayTitle(const char* title)
 	{
 		if (title == nullptr || title[0] == '\0' || std::strcmp(title, "game") == 0 || std::strcmp(title, "tooltip") == 0)
 			return "";
 		if (std::strcmp(title, "inventory") == 0)
-			return ".INVENTORY.";
+			return "인벤토리";
 		if (std::strcmp(title, "log") == 0)
-			return ".LOG.";
+			return "";
 		if (std::strcmp(title, "performance") == 0)
-			return ".PERFORMANCE.";
+			return "성능";
 		if (std::strcmp(title, "map") == 0)
-			return ".MAP.";
+			return "지도";
+		if (std::strcmp(title, "craft-items") == 0)
+			return "제작";
+		if (std::strcmp(title, "main-actions") == 0)
+			return "주요 행동";
+		if (std::strcmp(title, "build-actions") == 0)
+			return "건설 행동";
 		if (std::strcmp(title, "craft") == 0)
-			return ".CRAFT.";
+			return "제작";
 		if (std::strcmp(title, "status") == 0 || std::strcmp(title, "status-log") == 0)
-			return ".STATUS.";
+			return "";
 		if (std::strcmp(title, "actions") == 0)
-			return ".MAIN ACTION.";
+			return "주요 행동";
 		if (std::strcmp(title, "network") == 0)
 			return ".NETWORK.";
 
@@ -477,6 +431,16 @@ namespace
 		{ "화살 제작", SlotArrow, 8, true, { { SlotWood, 1 }, { SlotStone, 1 } } },
 	};
 	constexpr int CraftingRecipeCount = static_cast<int>(sizeof(CraftingRecipes) / sizeof(CraftingRecipes[0]));
+	constexpr const char* MainActionLabels[] =
+	{
+		"HP 물약 사용",
+		"대형 HP 물약 사용",
+		"속도 물약 사용",
+		"점프 물약 사용",
+		"방어 물약 사용",
+		"텔레포트 물약 사용",
+	};
+	constexpr int MainActionLabelCount = static_cast<int>(sizeof(MainActionLabels) / sizeof(MainActionLabels[0]));
 
 	unsigned short GetBlockAtlasTileIndex(unsigned short tileIndex)
 	{
@@ -870,8 +834,6 @@ void GameEngine::Start(const char* szTitle, float x, float y, float width, float
 	m_input->AddUser(this);
 
 	m_renderer->LoadTexture(BlockAtlasTexture);
-	for (const WCHAR* uiPanelTexture : UiPanelTextures)
-		m_renderer->LoadTexture(uiPanelTexture);
 	for (const auto& biomeLayers : SurfaceBackgroundLayers)
 	{
 		for (const BackgroundImageLayer& layer : biomeLayers)
@@ -960,10 +922,7 @@ void GameEngine::Update()
 	}
 
 	if (IsKeyDown(KeyMinimap))
-	{
 		m_minimapExpanded = !m_minimapExpanded;
-		m_minimapDirty = true;
-	}
 	PollNetwork();
 
 	QueryPerformanceCounter(&sectionEnd);
@@ -1149,6 +1108,7 @@ int GameEngine::GetMonitorRefreshRate() const
 
 void GameEngine::Release()
 {
+	ResetMinimapTextureCache();
 	ShutdownNetwork();
 	DeleteInput(m_input);
 	DeleteRenderer(m_renderer);

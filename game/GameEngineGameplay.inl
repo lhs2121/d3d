@@ -29,12 +29,13 @@ void GameEngine::UpdateMapReveal()
 				continue;
 
 			m_world.revealedTiles[index] = 1;
+			MarkMinimapTileDirty(x, y);
 			changed = true;
 		}
 	}
 
 	if (changed)
-		m_minimapDirty = true;
+		m_cachedMinimapSampleStep = -1;
 }
 
 void GameEngine::RevealAllMap()
@@ -45,7 +46,7 @@ void GameEngine::RevealAllMap()
 		std::fill(m_world.revealedTiles.begin(), m_world.revealedTiles.end(), 1);
 
 	m_debugRevealMap = true;
-	m_minimapDirty = true;
+	MarkMinimapAllDirty();
 	SetStatusText("지도 공개됨", 1.6f);
 }
 
@@ -57,8 +58,195 @@ void GameEngine::ResetMapReveal()
 		std::fill(m_world.revealedTiles.begin(), m_world.revealedTiles.end(), 0);
 
 	m_debugRevealMap = false;
-	m_minimapDirty = true;
+	MarkMinimapAllDirty();
 	UpdateMapReveal();
+}
+
+void GameEngine::ResetMinimapTextureCache()
+{
+	if (m_renderer != nullptr && m_minimapTextureId != 0)
+		m_renderer->ReleaseDynamicTexture(m_minimapTextureId);
+
+	m_minimapTextureId = 0;
+	m_minimapTextureWidth = 0;
+	m_minimapTextureHeight = 0;
+	m_minimapPixels.clear();
+	m_minimapDirtyTiles.clear();
+	m_minimapRuns.clear();
+	m_cachedMinimapStartX = -1;
+	m_cachedMinimapEndX = -1;
+	m_cachedMinimapStartY = -1;
+	m_cachedMinimapEndY = -1;
+	m_cachedMinimapSampleStep = -1;
+	m_minimapDirty = true;
+}
+
+unsigned int GameEngine::GetMinimapTilePixel(int tileX, int tileY) const
+{
+	auto pack = [](unsigned int r, unsigned int g, unsigned int b, unsigned int a = 255u)
+	{
+		r = (std::min)(255u, r);
+		g = (std::min)(255u, g);
+		b = (std::min)(255u, b);
+		a = (std::min)(255u, a);
+		return (a << 24) | (b << 16) | (g << 8) | r;
+	};
+
+	if (!IsTileInBounds(tileX, tileY))
+		return pack(0, 0, 0);
+	if (!IsMapTileRevealed(tileX, tileY))
+		return pack(0, 0, 0);
+
+	const BlockTile& tile = m_world.blocks[tileY * m_blockWidth + tileX];
+	if (tile.visible == 0)
+		return pack(4, 6, 8);
+
+	switch (tile.tileIndex)
+	{
+	case BlockGrass:
+		return pack(56, 158, 54);
+	case BlockDirt:
+		return pack(98, 63, 35);
+	case BlockStone:
+		return pack(98, 104, 110);
+	case BlockOre:
+		return pack(130, 166, 205);
+	case BlockSand:
+		return pack(210, 174, 82);
+	case BlockWood:
+	case BlockPlacedWood:
+		return pack(116, 67, 30);
+	case BlockLeaves:
+		return pack(39, 140, 52);
+	case BlockCraftingTable:
+		return pack(200, 118, 46);
+	case BlockPrairieStone:
+		return pack(88, 101, 87);
+	case BlockMossStone:
+		return pack(70, 116, 66);
+	case BlockSandstone:
+		return pack(178, 139, 74);
+	case BlockDesertStone:
+		return pack(128, 90, 57);
+	case BlockSnow:
+		return pack(219, 240, 245);
+	case BlockIce:
+		return pack(112, 184, 224);
+	case BlockFrozenStone:
+		return pack(98, 128, 148);
+	case BlockCrystalOre:
+		return pack(92, 224, 245);
+	default:
+		return pack(78, 82, 88);
+	}
+}
+
+void GameEngine::EnsureMinimapTexture()
+{
+	if (m_renderer == nullptr || m_blockWidth <= 0 || m_blockHeight <= 0)
+		return;
+
+	const size_t pixelCount = static_cast<size_t>(m_blockWidth) * static_cast<size_t>(m_blockHeight);
+	const bool sizeChanged =
+		m_minimapTextureWidth != m_blockWidth ||
+		m_minimapTextureHeight != m_blockHeight ||
+		m_minimapPixels.size() != pixelCount ||
+		m_minimapDirtyTiles.size() != pixelCount;
+
+	if (sizeChanged)
+	{
+		if (m_minimapTextureId != 0)
+			m_renderer->ReleaseDynamicTexture(m_minimapTextureId);
+
+		m_minimapTextureId = 0;
+		m_minimapTextureWidth = m_blockWidth;
+		m_minimapTextureHeight = m_blockHeight;
+		m_minimapPixels.assign(pixelCount, 0xFF000000u);
+		m_minimapDirtyTiles.assign(pixelCount, 1);
+		m_minimapDirty = true;
+	}
+
+	if (m_minimapTextureId == 0)
+		m_minimapTextureId = m_renderer->CreateDynamicTexture(m_blockWidth, m_blockHeight,
+			m_minimapPixels.empty() ? nullptr : m_minimapPixels.data());
+}
+
+void GameEngine::MarkMinimapTileDirty(int tileX, int tileY)
+{
+	if (!IsTileInBounds(tileX, tileY))
+		return;
+
+	const size_t index = static_cast<size_t>(tileY) * static_cast<size_t>(m_blockWidth) + static_cast<size_t>(tileX);
+	if (index >= m_minimapDirtyTiles.size())
+	{
+		m_minimapDirty = true;
+		return;
+	}
+
+	m_minimapDirtyTiles[index] = 1;
+}
+
+void GameEngine::MarkMinimapAllDirty()
+{
+	m_minimapDirty = true;
+	if (!m_minimapDirtyTiles.empty())
+		std::fill(m_minimapDirtyTiles.begin(), m_minimapDirtyTiles.end(), 1);
+}
+
+void GameEngine::UploadMinimapDirtyTiles()
+{
+	EnsureMinimapTexture();
+	if (m_renderer == nullptr || m_minimapTextureId == 0 || m_minimapPixels.empty())
+		return;
+
+	const size_t expectedCount = static_cast<size_t>(m_blockWidth) * static_cast<size_t>(m_blockHeight);
+	if (m_minimapPixels.size() != expectedCount || m_minimapDirtyTiles.size() != expectedCount)
+		return;
+
+	if (m_minimapDirty)
+	{
+		for (int y = 0; y < m_blockHeight; ++y)
+		{
+			const int rowStart = y * m_blockWidth;
+			for (int x = 0; x < m_blockWidth; ++x)
+			{
+				const int index = rowStart + x;
+				m_minimapPixels[index] = GetMinimapTilePixel(x, y);
+				m_minimapDirtyTiles[index] = 0;
+			}
+		}
+		m_renderer->UpdateDynamicTexture(m_minimapTextureId, 0, 0, m_blockWidth, m_blockHeight, m_minimapPixels.data(), m_blockWidth);
+		m_minimapDirty = false;
+		return;
+	}
+
+	for (int y = 0; y < m_blockHeight; ++y)
+	{
+		const int rowStart = y * m_blockWidth;
+		int firstDirty = -1;
+		int lastDirty = -1;
+		for (int x = 0; x < m_blockWidth; ++x)
+		{
+			if (m_minimapDirtyTiles[rowStart + x] == 0)
+				continue;
+			if (firstDirty < 0)
+				firstDirty = x;
+			lastDirty = x;
+		}
+
+		if (firstDirty < 0)
+			continue;
+
+		for (int x = firstDirty; x <= lastDirty; ++x)
+		{
+			const int index = rowStart + x;
+			m_minimapPixels[index] = GetMinimapTilePixel(x, y);
+			m_minimapDirtyTiles[index] = 0;
+		}
+
+		m_renderer->UpdateDynamicTexture(m_minimapTextureId, firstDirty, y, lastDirty - firstDirty + 1, 1,
+			m_minimapPixels.data() + rowStart + firstDirty, m_blockWidth);
+	}
 }
 
 void GameEngine::UpdateInventoryInput()
@@ -151,70 +339,53 @@ void GameEngine::UpdateMainActionInput()
 	if (!IsKeyDown(VK_LBUTTON))
 		return;
 
-	const float listLeft = panel.left + panel.width * (38.0f / UiStatusFrameWidth);
-	const float listTop = panel.top - panel.height * (72.0f / UiStatusFrameHeight);
-	const float listWidth = panel.width * (400.0f / UiStatusFrameWidth);
-	const float rowHeight = panel.height * (30.0f / UiStatusFrameHeight);
+	const float listLeft = panel.left + UiTerminalListPad;
+	const float listTop = panel.top - UiTerminalListTopGap;
+	const float listBottom = panel.top - panel.height + UiTerminalListBottomPad;
+	const float trackX = panel.left + panel.width - UiTerminalListPad - UiTerminalScrollbarWidth * 0.5f;
+	const float listWidth = (std::max)(24.0f, trackX - UiTerminalScrollbarWidth * 0.5f - 4.0f - listLeft);
+	const float rowHeight = std::clamp(panel.height * 0.056f, 12.0f, 15.0f);
 	const float rowCenterX = listLeft + listWidth * 0.5f;
-	const auto isActionRowClicked = [&](int rowIndex)
+	const int visibleRows = (std::max)(1, static_cast<int>((listTop - listBottom) / rowHeight));
+	m_mainActionScrollOffset = std::clamp(m_mainActionScrollOffset, 0, (std::max)(0, MainActionLabelCount - visibleRows));
+	const int firstAction = m_mainActionScrollOffset;
+	const int lastAction = (std::min)(MainActionLabelCount, firstAction + visibleRows);
+	int clickedAction = -1;
+	for (int actionIndex = firstAction; actionIndex < lastAction; ++actionIndex)
 	{
-		const float rowCenterY = listTop - rowHeight * (static_cast<float>(rowIndex) + 0.5f);
-		return IsPointInsideRect(cursorX, cursorY, rowCenterX, rowCenterY, listWidth, rowHeight - 2.0f);
-	};
-	int rowIndex = 0;
-	if (GetInventoryItemCount(SlotHealthPotion) > 0)
-	{
-		if (isActionRowClicked(rowIndex))
+		const int visibleIndex = actionIndex - firstAction;
+		const float rowCenterY = listTop - rowHeight * (static_cast<float>(visibleIndex) + 0.5f);
+		if (IsPointInsideRect(cursorX, cursorY, rowCenterX, rowCenterY, listWidth, rowHeight - 2.0f))
 		{
-			TryUseHealthPotion(SlotHealthPotion);
-			return;
+			clickedAction = actionIndex;
+			break;
 		}
-		++rowIndex;
 	}
-	if (GetInventoryItemCount(SlotGreaterHealthPotion) > 0)
+	if (clickedAction < 0)
+		return;
+
+	switch (clickedAction)
 	{
-		if (isActionRowClicked(rowIndex))
-		{
-			TryUseHealthPotion(SlotGreaterHealthPotion);
-			return;
-		}
-		++rowIndex;
-	}
-	if (GetInventoryItemCount(SlotSpeedPotion) > 0)
-	{
-		if (isActionRowClicked(rowIndex))
-		{
-			TryUseBuffPotion(SlotSpeedPotion);
-			return;
-		}
-		++rowIndex;
-	}
-	if (GetInventoryItemCount(SlotJumpPotion) > 0)
-	{
-		if (isActionRowClicked(rowIndex))
-		{
-			TryUseBuffPotion(SlotJumpPotion);
-			return;
-		}
-		++rowIndex;
-	}
-	if (GetInventoryItemCount(SlotGuardPotion) > 0)
-	{
-		if (isActionRowClicked(rowIndex))
-		{
-			TryUseBuffPotion(SlotGuardPotion);
-			return;
-		}
-		++rowIndex;
-	}
-	if (GetInventoryItemCount(SlotTeleportPotion) > 0)
-	{
-		if (isActionRowClicked(rowIndex))
-		{
-			TryUseTeleportPotion();
-			return;
-		}
-		++rowIndex;
+	case 0:
+		TryUseHealthPotion(SlotHealthPotion);
+		break;
+	case 1:
+		TryUseHealthPotion(SlotGreaterHealthPotion);
+		break;
+	case 2:
+		TryUseBuffPotion(SlotSpeedPotion);
+		break;
+	case 3:
+		TryUseBuffPotion(SlotJumpPotion);
+		break;
+	case 4:
+		TryUseBuffPotion(SlotGuardPotion);
+		break;
+	case 5:
+		TryUseTeleportPotion();
+		break;
+	default:
+		break;
 	}
 }
 
@@ -671,6 +842,38 @@ void GameEngine::UpdateCrafting(float deltaTime)
 		const int wheelDelta = m_window->ConsumeMouseWheelDelta();
 		if (wheelDelta != 0)
 		{
+			float cursorX = 0.0f;
+			float cursorY = 0.0f;
+			const bool hasCursor = GetCursorViewPosition(cursorX, cursorY);
+			auto isCursorOverPanel = [this, hasCursor, cursorX, cursorY](const UiRect& panel)
+			{
+				if (!hasCursor)
+					return false;
+				return IsPointInsideRect(cursorX, cursorY,
+					panel.left + panel.width * 0.5f,
+					panel.top - panel.height * 0.5f,
+					panel.width,
+					panel.height);
+			};
+			auto getVisibleActionRows = [](const UiRect& panel)
+			{
+				const float listTop = panel.top - UiTerminalListTopGap;
+				const float listBottom = panel.top - panel.height + UiTerminalListBottomPad;
+				const float rowHeight = std::clamp(panel.height * 0.056f, 12.0f, 15.0f);
+				return (std::max)(1, static_cast<int>((listTop - listBottom) / rowHeight));
+			};
+			auto scrollActionList = [wheelDelta](int& wheelRemainder, int& scrollOffset, int itemCount, int visibleRows)
+			{
+				wheelRemainder += wheelDelta;
+				const int wheelSteps = wheelRemainder / WHEEL_DELTA;
+				if (wheelSteps == 0)
+					return;
+
+				wheelRemainder -= wheelSteps * WHEEL_DELTA;
+				const int maxScrollOffset = (std::max)(0, itemCount - visibleRows);
+				scrollOffset = std::clamp(scrollOffset - wheelSteps, 0, maxScrollOffset);
+			};
+
 			if (IsCursorOverCraftingPanel())
 			{
 				m_craftingWheelRemainder += wheelDelta;
@@ -681,6 +884,11 @@ void GameEngine::UpdateCrafting(float deltaTime)
 					m_craftingScrollOffset -= wheelSteps;
 					ClampCraftingScrollOffset();
 				}
+			}
+			else if (isCursorOverPanel(GetRightPanelRect(2)))
+			{
+				scrollActionList(m_mainActionWheelRemainder, m_mainActionScrollOffset,
+					MainActionLabelCount, getVisibleActionRows(GetRightPanelRect(2)));
 			}
 			else
 			{
@@ -2164,7 +2372,6 @@ bool GameEngine::TryHarvestTreeAt(int tileX, int tileY)
 		PublishLocalTileEdit(leafIndex % m_blockWidth, leafIndex / m_blockWidth);
 	}
 
-	m_minimapDirty = true;
 	for (int woodIndex : fallingWoodIndices)
 	{
 		const int woodX = woodIndex % m_blockWidth;
@@ -2510,10 +2717,12 @@ void GameEngine::InitializeBlockChunkCache()
 
 void GameEngine::MarkBlockChunkDirty(int tileX, int tileY)
 {
-	if (m_blockChunkVersions.empty())
+	if (!IsTileInBounds(tileX, tileY))
 		return;
 
-	if (!IsTileInBounds(tileX, tileY))
+	MarkMinimapTileDirty(tileX, tileY);
+
+	if (m_blockChunkVersions.empty())
 		return;
 
 	const int chunkX = std::clamp(tileX / (std::max)(1, m_blockChunkSizeTiles), 0, m_blockChunkColumns - 1);
@@ -2533,7 +2742,6 @@ void GameEngine::MarkBlockChunkDirty(int tileX, int tileY)
 	}
 
 	m_blockChunkVersions[chunkIndex] = m_blockChunkVersionCounter;
-	m_minimapDirty = true;
 }
 
 void GameEngine::MarkBlockIndexDirty(int blockIndex)
