@@ -15,6 +15,6 @@ void Debug::CrtSetDbgFlag()
 
 void Debug::MsgBoxAssert(const char* errorMsg)
 {
-	MessageBox(nullptr, errorMsg, "error", MB_OK);
+	MessageBoxA(nullptr, errorMsg, "error", MB_OK);
 	assert(0);
 }

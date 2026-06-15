@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 set "ROOT=%~dp0"
-set "GAME_EXE=%ROOT%bin\x64\Debug\game.exe"
+set "GAME_EXE=%ROOT%bin\x64\Release\game.exe"
 set "VS_INSTALLER=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer"
 set "VS_MSBUILD_CMD="
 set "NEEDS_BUILD=1"
@@ -39,15 +39,15 @@ set "ROOT_DIR=%ROOT%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference='Stop';" ^
     "$root=$env:ROOT_DIR;" ^
-    "$outputs=@('bin\x64\Debug\game.exe','bin\x64\Debug\commonlib.dll','bin\x64\Debug\inputlib.dll','bin\x64\Debug\collib.dll','bin\x64\Debug\windowlib.dll','bin\x64\Debug\rendererlib.dll','bin\x64\Debug\networklib.dll') | ForEach-Object { Join-Path $root $_ };" ^
+    "$outputs=@('bin\x64\Release\game.exe','bin\x64\Release\commonlib.dll','bin\x64\Release\inputlib.dll','bin\x64\Release\collib.dll','bin\x64\Release\windowlib.dll','bin\x64\Release\rendererlib.dll','bin\x64\Release\networklib.dll') | ForEach-Object { Join-Path $root $_ };" ^
     "foreach($output in $outputs){ if(!(Test-Path -LiteralPath $output)){ exit 1 } }" ^
     "$oldestOutput=($outputs | ForEach-Object { (Get-Item -LiteralPath $_).LastWriteTimeUtc } | Sort-Object | Select-Object -First 1);" ^
     "$roots=@('commonlib','inputlib','collib','windowlib','rendererlib','networklib','game','build') | ForEach-Object { Join-Path $root $_ };" ^
     "$extensions=@('.cpp','.c','.h','.hpp','.inl','.hlsl','.vcxproj','.filters','.sln','.props');" ^
     "foreach($sourceRoot in $roots){ if(!(Test-Path -LiteralPath $sourceRoot)){ exit 1 } $newer=Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() -and $_.LastWriteTimeUtc -gt $oldestOutput } | Select-Object -First 1; if($newer){ exit 1 } }" ^
-    "$rendererOutput=Join-Path $root 'bin\x64\Debug\rendererlib.dll';" ^
+    "$rendererOutput=Join-Path $root 'bin\x64\Release\rendererlib.dll';" ^
     "$rendererOutputTime=(Get-Item -LiteralPath $rendererOutput).LastWriteTimeUtc;" ^
-    "$rendererDeps=@(Join-Path $root 'thirdparty\DirectXTex2022\include'; Join-Path $root 'thirdparty\DirectXTex2022\DebugLib');" ^
+    "$rendererDeps=@(Join-Path $root 'thirdparty\DirectXTex2022\include'; Join-Path $root 'thirdparty\DirectXTex2022\ReleaseLib');" ^
     "$rendererExtensions=@('.h','.hpp','.inl','.lib');" ^
     "foreach($depRoot in $rendererDeps){ if(!(Test-Path -LiteralPath $depRoot)){ exit 1 } $newer=Get-ChildItem -LiteralPath $depRoot -Recurse -File | Where-Object { $rendererExtensions -contains $_.Extension.ToLowerInvariant() -and $_.LastWriteTimeUtc -gt $rendererOutputTime } | Select-Object -First 1; if($newer){ exit 1 } }" ^
     "exit 0"
@@ -122,7 +122,7 @@ if not exist "%~2" (
     exit /b 1
 )
 
-msbuild "%~2" /p:Configuration=Debug /p:Platform=x64 /m /v:minimal
+msbuild "%~2" /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 if errorlevel 1 (
     echo.
     echo build failed: %~1

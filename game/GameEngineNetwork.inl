@@ -169,6 +169,13 @@ void GameEngine::UpdateStartMenu(float deltaTime)
 				m_startNicknameEditing = false;
 				SetMultiplayerMenuStatus("참가 선택됨");
 			}
+			else if (action == StartMenuActionInput)
+			{
+				m_networkConfig.mode = NetworkConfig::Mode::Client;
+				m_startJoinHostEditing = true;
+				m_startNicknameEditing = false;
+				SetMultiplayerMenuStatus("참가 주소 입력");
+			}
 			else if (action == StartMenuActionStart)
 			{
 				BeginSelectedGameFromMenu();
@@ -345,7 +352,7 @@ void GameEngine::DrawStartMenu()
 
 	const float inputCenterY = panel.top - 151.0f;
 	const bool inputHovered = hoverAction == StartMenuActionInput;
-	const bool inputActive = selectedMode == NetworkConfig::Mode::Client;
+	const bool inputActive = selectedMode == NetworkConfig::Mode::Client || inputHovered || m_startJoinHostEditing;
 	DrawSolidRect(inputCenterX, inputCenterY, inputWidth, 34.0f,
 		m_startJoinHostEditing ? 0.385f : (inputHovered && inputActive ? 0.350f : UiThemeBodyDarkR),
 		m_startJoinHostEditing ? 0.350f : (inputHovered && inputActive ? 0.320f : UiThemeBodyDarkG),
@@ -478,8 +485,7 @@ int GameEngine::GetStartMenuActionAt(float viewX, float viewY) const
 	if (IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 112.0f, panel.width - 56.0f, 30.0f))
 		return StartMenuActionNickname;
 
-	if (m_networkConfig.mode == NetworkConfig::Mode::Client &&
-		IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 151.0f, panel.width - 56.0f, 34.0f))
+	if (IsPointInsideRect(viewX, viewY, panel.left + panel.width * 0.5f, panel.top - 151.0f, panel.width - 56.0f, 34.0f))
 	{
 		return StartMenuActionInput;
 	}
